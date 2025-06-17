@@ -112,3 +112,28 @@ type Handlers struct {
 type ContextKey string
 
 const UserIDContextKey ContextKey = "userID"
+
+// DashboardStats represents dashboard statistics
+type DashboardStats struct {
+	TotalContacts        int `json:"totalContacts"`
+	TotalCompanies       int `json:"totalCompanies"`
+	TotalTasks           int `json:"totalTasks"`
+	CompletedTasks       int `json:"completedTasks"`
+	UpcomingInteractions int `json:"upcomingInteractions"`
+	FilesUploaded        int `json:"filesUploaded"`
+}
+
+// PipelineStage represents pipeline distribution data
+type PipelineStage struct {
+	Stage string `json:"stage"`
+	Count int    `json:"count"`
+	Color string `json:"color"`
+}
+
+// InteractionTrend represents daily interaction trends
+type InteractionTrend struct {
+	Date     string `json:"date"`
+	Calls    int    `json:"calls"`
+	Emails   int    `json:"emails"`
+	Meetings int    `json:"meetings"`
+}

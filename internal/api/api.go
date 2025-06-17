@@ -25,6 +25,7 @@ type Api struct {
 	jwtToken    string
 	router      *mux.Router
 	authRouter  *mux.Router
+	dashRouter  *mux.Router
 	Params      models.EnvParams
 	handlers.CRMHandlers
 	database.DBManager
@@ -40,9 +41,16 @@ func (a *Api) SetupAuthRouter() {
 	a.authRouter = a.router.PathPrefix("/api").Subrouter()
 	a.authRouter.Use(middleware.AuthMiddleware)
 }
+func (a *Api) SetupDashRouter() {
+	a.dashRouter = a.router.PathPrefix("/dash").Subrouter()
+	a.dashRouter.Use(middleware.AuthMiddleware)
+}
 func (a *Api) SetupAllRoutes() {
 	// Setup auth router
 	a.SetupAuthRouter()
+
+	// Setup Dashboard router
+	a.SetupDashRouter()
 
 	// Setup routes
 	a.SetupAuthenticationRoutes()
@@ -52,6 +60,7 @@ func (a *Api) SetupAllRoutes() {
 	a.SetupTaskRoutes()
 	a.SetupHealthRoutes()
 	a.SetupInteractionRoutes()
+	a.SetupDashboardRoutes()
 }
 func (a *Api) SetupAuthenticationRoutes() {
 	a.router.HandleFunc("/register", a.CRMHandlers.RegisterUser).Methods("POST")
@@ -74,6 +83,7 @@ func (a *Api) SetupContactRoutes() {
 func (a *Api) SetupFileRoutes() {
 	a.authRouter.HandleFunc("/files", a.CRMHandlers.CreateFile).Methods("POST")
 	a.authRouter.HandleFunc("/files", a.CRMHandlers.ListFiles).Methods("GET")
+	a.authRouter.HandleFunc("/files/upload", a.CRMHandlers.UploadFileHandler).Methods("POST")
 	a.authRouter.HandleFunc("/files/{id}", a.CRMHandlers.GetFile).Methods("GET")
 	a.authRouter.HandleFunc("/files/{id}", a.CRMHandlers.UpdateFile).Methods("PUT")
 	a.authRouter.HandleFunc("/files/{id}", a.CRMHandlers.DeleteFile).Methods("DELETE")
@@ -92,8 +102,15 @@ func (a *Api) SetupInteractionRoutes() {
 	a.authRouter.HandleFunc("/interactions/{id}", a.CRMHandlers.UpdateInteraction).Methods("PUT")
 	a.authRouter.HandleFunc("/interactions/{id}", a.CRMHandlers.DeleteInteraction).Methods("DELETE")
 }
+func (a *Api) SetupDashboardRoutes() {
+	a.dashRouter.Use(middleware.AuthMiddleware)
+	a.dashRouter.HandleFunc("/stats", a.CRMHandlers.GetDashboardStats).Methods("GET")
+	a.dashRouter.HandleFunc("/pipeline", a.CRMHandlers.GetPipelineData).Methods("GET")
+	a.dashRouter.HandleFunc("/interactions", a.CRMHandlers.GetInteractionTrends).Methods("GET")
+}
 func (a *Api) SetupLogger() {
 	a.log = logger.NewConsoleLogger(os.Stderr, "[CRM-API]", 0, logger.LogLevelInfo)
+	a.CRMHandlers.Log = a.log
 	a.log.Info("Custom Logger initialized")
 }
 func (a *Api) SetupHealthRoutes() {

@@ -6,13 +6,15 @@ import (
 	"errors"
 	"golang.org/x/crypto/bcrypt"
 	"log"
+	"micro-CRM/internal/logger"
 	"micro-CRM/internal/models"
 	"micro-CRM/internal/utils"
 	"net/http"
 )
 
 type CRMHandlers struct {
-	DB *sql.DB
+	DB  *sql.DB
+	Log logger.Logger
 }
 
 // RegisterUser handles user registration.
@@ -22,7 +24,7 @@ func (c *CRMHandlers) RegisterUser(w http.ResponseWriter, r *http.Request) {
 		utils.RespondError(w, http.StatusBadRequest, "Invalid request payload")
 		return
 	}
-
+	c.Log.Info("Registering user call from : ", r.RemoteAddr)
 	// Hash the password
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(payload.Password), bcrypt.DefaultCost)
 	if err != nil {
@@ -74,7 +76,6 @@ func (c *CRMHandlers) LoginUser(w http.ResponseWriter, r *http.Request) {
 		utils.RespondError(w, http.StatusBadRequest, "Invalid request payload")
 		return
 	}
-
 	db := c.DB
 	var user models.User
 	err := db.QueryRow("SELECT id, username, password_hash, email, first_name, last_name, created_at, updated_at FROM users WHERE username = ?", payload.Username).Scan(

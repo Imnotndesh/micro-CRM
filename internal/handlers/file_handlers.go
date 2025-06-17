@@ -4,18 +4,200 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"log"
+	"micro-CRM/internal/logger"
 	"micro-CRM/internal/models"
 	"micro-CRM/internal/utils"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 
 	"github.com/gorilla/mux"
 )
 
+const (
+	maxUploadSize = 10 << 20
+	uploadDir     = "./uploads"
+)
+
+func ensureUploadsDir(c logger.Logger) {
+	if _, err := os.Stat(uploadDir); os.IsNotExist(err) {
+		c.Info("Creating upload directory")
+		if err = os.Mkdir(uploadDir, 0755); err != nil {
+			c.Fatal("Unable to create upload directory")
+		}
+	}
+}
+func (c *CRMHandlers) UploadFileHandler(w http.ResponseWriter, r *http.Request) {
+	userID, ok := r.Context().Value(models.UserIDContextKey).(int)
+	if !ok {
+		utils.RespondError(w, http.StatusUnauthorized, "User not authenticated")
+		return
+	}
+
+	// 1. Uploads Dir Check
+	c.Log.Debug("UploadFile: received request to upload file")
+	ensureUploadsDir(c.Log)
+
+	// 2. Limit the size of the uploaded file
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
+	if err := r.ParseMultipartForm(maxUploadSize); err != nil {
+		c.Log.Warn("UploadFile: Max upload size exceeded or invalid multipart form: ", err)
+		utils.RespondError(w, http.StatusBadRequest, fmt.Sprintf("File too large. Max size is %dMB", maxUploadSize/(1<<20)))
+		return
+	}
+
+	// 3. Get the file from the form data
+	file, handler, err := r.FormFile("file") // "file" is the name of the input field in the form
+	if err != nil {
+		c.Log.Warn("UploadFile: Error retrieving file from form: %v", err)
+		utils.RespondError(w, http.StatusBadRequest, "Error retrieving file from form. Make sure the input field is named 'file'.")
+		return
+	}
+	defer file.Close() // Ensure the uploaded file is closed
+
+	// 4. Validate file type (simple example: only allow certain MIME types)
+	// You should implement more robust content-type sniffing if security is critical
+	allowedMIMETypes := map[string]bool{
+		"image/jpeg":         true,
+		"image/png":          true,
+		"application/pdf":    true,
+		"text/plain":         true,
+		"application/msword": true, // .doc
+		"application/vnd.openxmlformats-officedocument.wordprocessingml.document": true, // .docx
+		"application/vnd.ms-excel": true, // .xls
+		"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": true, // .xlsx
+	}
+
+	fileType := handler.Header.Get("Content-Type")
+	if !allowedMIMETypes[fileType] {
+		c.Log.Warn("UploadFile: Disallowed file type uploaded: %s", fileType)
+		utils.RespondError(w, http.StatusBadRequest, "Unsupported file type. Allowed: JPEG, PNG, PDF, TXT, Word, Excel.")
+		return
+	}
+
+	// 5. Create a unique filename on the server to prevent conflicts and ensure safety
+	filename := handler.Filename
+	ext := filepath.Ext(filename)
+	base := filename[:len(filename)-len(ext)]
+	uniqueFilename := fmt.Sprintf("%s-%d%s", base, time.Now().UnixNano(), ext) // Add nanosecond timestamp for uniqueness
+	storagePath := filepath.Join(uploadDir, uniqueFilename)
+
+	// 6. Create the destination file on the server
+	dst, err := os.Create(storagePath)
+	if err != nil {
+		c.Log.Error("UploadFile: Error creating destination file %s: %v", storagePath, err)
+		utils.RespondError(w, http.StatusInternalServerError, "Could not save file on server")
+		return
+	}
+	defer dst.Close() // Ensure the destination file is closed
+
+	// 7. Copy the uploaded file to the destination
+	fileSize, err := io.Copy(dst, file) // io.Copy returns the number of bytes copied
+	if err != nil {
+		c.Log.Error("UploadFile: Error copying file to destination %s: %v", storagePath, err)
+		utils.RespondError(w, http.StatusInternalServerError, "Error saving file")
+		return
+	}
+
+	c.Log.Info("UploadFile: Successfully saved file: %s (Size: %d bytes)", uniqueFilename, fileSize)
+
+	// 8. Extract optional metadata from form fields
+	contactIDStr := r.FormValue("contact_id")
+	var contactID *int
+	if contactIDStr != "" {
+		id, err := strconv.Atoi(contactIDStr)
+		if err != nil {
+			c.Log.Warn("UploadFile: Invalid contact_id in form: ", err)
+			utils.RespondError(w, http.StatusBadRequest, "Invalid contact_id format")
+			return
+		}
+		contactID = &id
+	}
+
+	companyIDStr := r.FormValue("company_id")
+	var companyID *int
+	if companyIDStr != "" {
+		id, err := strconv.Atoi(companyIDStr)
+		if err != nil {
+			c.Log.Warn("UploadFile: Invalid company_id in form: %v", err)
+			utils.RespondError(w, http.StatusBadRequest, "Invalid company_id format")
+			return
+		}
+		companyID = &id
+	}
+
+	// 9. Validate contact_id or company_id belongs to the user if provided
+	if contactID != nil && *contactID != 0 {
+		var exists bool
+		err := c.DB.QueryRow("SELECT EXISTS(SELECT 1 FROM contacts WHERE id = ? AND user_id = ?)", *contactID, userID).Scan(&exists)
+		if err != nil || !exists {
+			c.Log.Warn("UploadFile: Contact ID %d not found or does not belong to user %d", *contactID, userID)
+			utils.RespondError(w, http.StatusForbidden, "Associated contact not found or does not belong to the user")
+			return
+		}
+	}
+	if companyID != nil && *companyID != 0 {
+		var exists bool
+		err := c.DB.QueryRow("SELECT EXISTS(SELECT 1 FROM companies WHERE id = ? AND user_id = ?)", *companyID, userID).Scan(&exists)
+		if err != nil || !exists {
+			c.Log.Warn("UploadFile: Company ID %d not found or does not belong to user %d", *companyID, userID)
+			utils.RespondError(w, http.StatusForbidden, "Associated company not found or does not belong to the user")
+			return
+		}
+	}
+
+	// 10. Create the database record
+	fileRecord := models.File{
+		UserID:      userID,
+		ContactID:   contactID,
+		CompanyID:   companyID,
+		FileName:    filename,                  // Original filename
+		StoragePath: storagePath,               // Unique path on server
+		FileType:    &fileType,                 // MIME type from header
+		FileSize:    intPointer(int(fileSize)), // Convert int64 to int, use helper
+	}
+
+	stmt, err := c.DB.Prepare(`INSERT INTO files (user_id, contact_id, company_id, file_name, storage_path, file_type, file_size) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+	if err != nil {
+		c.Log.Error("UploadFile: Error preparing statement: %v", err)
+		utils.RespondError(w, http.StatusInternalServerError, "Database error")
+		return
+	}
+	defer stmt.Close()
+
+	result, err := stmt.Exec(
+		fileRecord.UserID,
+		fileRecord.ContactID,
+		fileRecord.CompanyID,
+		fileRecord.FileName,
+		fileRecord.StoragePath,
+		fileRecord.FileType,
+		fileRecord.FileSize,
+	)
+	if err != nil {
+		c.Log.Error("UploadFile: Error inserting file record: %v", err)
+		utils.RespondError(w, http.StatusInternalServerError, "Failed to create file record")
+		return
+	}
+
+	id, _ := result.LastInsertId()
+	fileRecord.ID = int(id)
+	now := time.Now().Format(time.RFC3339)
+	fileRecord.UploadedAt = now
+
+	c.Log.Info("UploadFile: File record created successfully for file %s", fileRecord.FileName)
+	utils.RespondJSON(w, http.StatusCreated, fileRecord)
+}
+func intPointer(i int) *int {
+	return &i
+}
+
 // CreateFile handles the creation of a new file record (metadata only).
-// Actual file upload/storage is out of scope for this API.
 func (c *CRMHandlers) CreateFile(w http.ResponseWriter, r *http.Request) {
 	userID, ok := r.Context().Value(models.UserIDContextKey).(int)
 	if !ok {

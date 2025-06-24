@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"github.com/gorilla/mux"
+	"github.com/rs/cors"
 	"log"
 	"micro-CRM/internal/database"
 	"micro-CRM/internal/handlers"
@@ -152,12 +153,16 @@ func (a *Api) Start() {
 	// Kill channel
 	var killSignal = make(chan os.Signal)
 	signal.Notify(killSignal, os.Interrupt, os.Kill, syscall.SIGTERM, syscall.SIGKILL)
-	server := &http.Server{Addr: ":" + a.Params.ApiPort, Handler: a.router}
+	handler := cors.AllowAll().Handler(a.router)
+	server := &http.Server{
+		Addr:    ":" + a.Params.ApiPort,
+		Handler: handler,
+	}
 
 	go func() {
 		startSting := "Starting API at endpoint: " + a.Params.ApiPort
 		a.log.Info(startSting)
-		if err = server.ListenAndServe(); err != nil && !errors.Is(http.ErrServerClosed, err) {
+		if err = server.ListenAndServeTLS(a.Params.CertFilePath, a.Params.KeyFilePath); err != nil && !errors.Is(http.ErrServerClosed, err) {
 			log.Fatalf("Cannot start API: %v", err)
 		}
 	}()

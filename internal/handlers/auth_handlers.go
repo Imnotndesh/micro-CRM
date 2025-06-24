@@ -77,6 +77,7 @@ func (c *CRMHandlers) LoginUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	db := c.DB
+	c.Log.Info("User login request")
 	var user models.User
 	err := db.QueryRow("SELECT id, username, password_hash, email, first_name, last_name, created_at, updated_at FROM users WHERE username = ?", payload.Username).Scan(
 		&user.ID, &user.Username, &user.PasswordHash, &user.Email, &user.FirstName, &user.LastName, &user.CreatedAt, &user.UpdatedAt)

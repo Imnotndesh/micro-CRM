@@ -100,9 +100,11 @@ type File struct {
 	UploadedAt  string  `json:"uploaded_at,omitempty"`
 }
 type EnvParams struct {
-	DbPath   string
-	JWTToken string
-	ApiPort  string
+	DbPath       string
+	JWTToken     string
+	ApiPort      string
+	KeyFilePath  string
+	CertFilePath string
 }
 type Handlers struct {
 	Db *sql.DB
@@ -137,3 +139,10 @@ type InteractionTrend struct {
 	Emails   int    `json:"emails"`
 	Meetings int    `json:"meetings"`
 }
+
+const (
+	DefaultDBPath   = "./database/micro-crm.db/"
+	DefaultKeyPath  = "./certs/micro-crm-key.pem"
+	DefaultCertPath = "./certs/micro-crm-cert.pem"
+	DefaultApiPort  = "9080"
+)

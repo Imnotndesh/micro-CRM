@@ -37,10 +37,8 @@ func main() {
 			log.Fatalln("Key and cert files do not exist")
 		}
 	} else {
-		log.Fatalln("Cert file and key fie path env variable must be passed")
+		log.Fatalln("Cert file and key file path env variable must be passed")
 	}
-	serverApi := api.Api{
-		Params: customVars,
-	}
+	serverApi := api.NewApi(customVars)
 	serverApi.Start()
 }

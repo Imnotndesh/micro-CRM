@@ -1,7 +1,7 @@
 package database
 
 import (
-	_ "github.com/mattn/go-sqlite3" // Ensure the driver is imported here too
+	_ "modernc.org/sqlite" // Ensure the driver is imported here too
 )
 
 // createSchemaSQL is a multi-line string containing all our SQL CREATE TABLE statements.

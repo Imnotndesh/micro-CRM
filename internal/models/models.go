@@ -7,11 +7,42 @@ type User struct {
 	ID           int    `json:"id"`
 	Username     string `json:"username"`
 	Email        string `json:"email"`
-	PasswordHash string `json:"-"` // Don't expose password hash in JSON
+	PasswordHash string `json:"-,omitempty"` // Don't expose password hash in JSON
 	FirstName    string `json:"first_name,omitempty"`
 	LastName     string `json:"last_name,omitempty"`
 	CreatedAt    string `json:"created_at,omitempty"`
 	UpdatedAt    string `json:"updated_at,omitempty"`
+}
+
+// GetUserPayload payload for GetUserinfo handler
+type GetUserPayload struct {
+	ID int `json:"id"`
+}
+
+// GetUserResponse response struct for GetUserInfo Function in profile handler
+type GetUserResponse struct {
+	ID        int    `json:"id"`
+	Username  string `json:"username"`
+	Email     string `json:"email"`
+	FirstName string `json:"first_name,omitempty"`
+	LastName  string `json:"last_name,omitempty"`
+	CreatedAt string `json:"created_at,omitempty"`
+	UpdatedAt string `json:"updated_at,omitempty"`
+}
+
+// EditUserPayload expected payload for edit profile handler
+type EditUserPayload struct {
+	Username    string `json:"username"`
+	Email       string `json:"email"`
+	FirstName   string `json:"first_name,omitempty"`
+	LastName    string `json:"last_name,omitempty"`
+	NewPassword string `json:"new_password,omitempty"`
+}
+
+// UpdateUserResponse response for UpdateUserInfo handler
+type UpdateUserResponse struct {
+	Message   string `json:"message"`
+	UpdatedAt string `json:"updated_at"`
 }
 
 // UserRegistrationPayload for incoming registration requests.
@@ -27,6 +58,11 @@ type UserRegistrationPayload struct {
 type UserLoginPayload struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
+}
+
+// UserDeleteResponse profile delete response
+type UserDeleteResponse struct {
+	Message string `json:"message"`
 }
 
 // Company represents a company record.
@@ -141,7 +177,7 @@ type InteractionTrend struct {
 }
 
 const (
-	DefaultDBPath   = "./database/micro-crm.db/"
+	DefaultDBPath   = "/app/database/micro-crm.db"
 	DefaultKeyPath  = "./certs/micro-crm-key.pem"
 	DefaultCertPath = "./certs/micro-crm-cert.pem"
 	DefaultApiPort  = "9080"

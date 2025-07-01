@@ -62,6 +62,7 @@ func (a *Api) SetupAllRoutes() {
 	a.SetupHealthRoutes()
 	a.SetupInteractionRoutes()
 	a.SetupDashboardRoutes()
+	a.SetupProfileRoutes()
 }
 func (a *Api) SetupAuthenticationRoutes() {
 	a.router.HandleFunc("/register", a.CRMHandlers.RegisterUser).Methods("POST")
@@ -89,6 +90,11 @@ func (a *Api) SetupFileRoutes() {
 	a.authRouter.HandleFunc("/files/{id}", a.CRMHandlers.UpdateFile).Methods("PUT")
 	a.authRouter.HandleFunc("/files/{id}", a.CRMHandlers.DeleteFile).Methods("DELETE")
 }
+func (a *Api) SetupProfileRoutes() {
+	a.authRouter.HandleFunc("/profile", a.CRMHandlers.GetUserInfo).Methods("GET")
+	a.authRouter.HandleFunc("/profile/update", a.CRMHandlers.UpdateUserInfo).Methods("PUT")
+	a.authRouter.HandleFunc("/profile/delete", a.CRMHandlers.DeleteUser).Methods("DELETE")
+}
 func (a *Api) SetupTaskRoutes() {
 	a.authRouter.HandleFunc("/tasks", a.CRMHandlers.CreateTask).Methods("POST")
 	a.authRouter.HandleFunc("/tasks", a.CRMHandlers.ListTasks).Methods("GET")
@@ -112,6 +118,7 @@ func (a *Api) SetupDashboardRoutes() {
 func (a *Api) SetupLogger() {
 	a.log = logger.NewConsoleLogger(os.Stderr, "[CRM-API]", 0, logger.LogLevelInfo)
 	a.CRMHandlers.Log = a.log
+	a.DBManager.Log = a.log
 	a.log.Info("Custom Logger initialized")
 }
 func (a *Api) SetupHealthRoutes() {

@@ -112,6 +112,7 @@ func (a *Api) SetupDashboardRoutes() {
 func (a *Api) SetupLogger() {
 	a.log = logger.NewConsoleLogger(os.Stderr, "[CRM-API]", 0, logger.LogLevelInfo)
 	a.CRMHandlers.Log = a.log
+	a.DBManager.Log = a.log
 	a.log.Info("Custom Logger initialized")
 }
 func (a *Api) SetupHealthRoutes() {

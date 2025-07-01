@@ -109,6 +109,6 @@ func (c *CRMHandlers) LoginUser(w http.ResponseWriter, r *http.Request) {
 	utils.RespondJSON(w, http.StatusOK, map[string]interface{}{
 		"message": "Login successful",
 		"token":   token,
-		"user":    user, // Optionally return user details
+		"user_id": user.ID,
 	})
 }

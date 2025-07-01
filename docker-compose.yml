@@ -1,0 +1,15 @@
+version: "3.9"
+
+services:
+  app:
+    image: localhost/micro-crm:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: microCRM
+    ports:
+      - "9080:9080"
+    volumes:
+      - ./certs:/app/certs:z
+      - ./database:/app/database:z
+    restart: always

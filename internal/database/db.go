@@ -4,13 +4,16 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	_ "github.com/mattn/go-sqlite3" // SQLite driver
 	"log"
+	"micro-CRM/internal/logger"
+	_ "modernc.org/sqlite"
+	"os"
 )
 
 type DBManager struct {
 	DB   *sql.DB
 	path string
+	Log  logger.Logger
 }
 
 func NewDBManager(dbPath string) *DBManager {
@@ -18,11 +21,15 @@ func NewDBManager(dbPath string) *DBManager {
 		path: dbPath,
 	}
 }
-
 func (dm *DBManager) Connect() error {
-	log.Printf("Attempting to connect to database at: %s", dm.path)
-	db, err := sql.Open("sqlite3", dm.path)
+	log.Println("finding Database")
+	if _, err := os.Stat(dm.path); err != nil {
+		return errors.New("database does not exist")
+	}
+	log.Println("connecting to Database")
+	db, err := sql.Open("sqlite", dm.path)
 	if err != nil {
+
 		return fmt.Errorf("failed to open database connection: %w", err)
 	}
 

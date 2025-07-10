@@ -39,7 +39,11 @@ func (c *CRMHandlers) CreateInteraction(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	stmt, err := db.Prepare(`INSERT INTO interactions (user_id, contact_id, type, description, interaction_at) VALUES (?, ?, ?, ?, ?)`)
+	stmt, err := db.Prepare(`
+  INSERT INTO interactions (
+    user_id, contact_id, type, subject, duration, outcome, follow_up, description, interaction_at, follow_up_date
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`)
 	if err != nil {
 		log.Printf("Error preparing statement: %v", err)
 		utils.RespondError(w, http.StatusInternalServerError, "Database error")
@@ -57,8 +61,13 @@ func (c *CRMHandlers) CreateInteraction(w http.ResponseWriter, r *http.Request) 
 		interaction.UserID,
 		interaction.ContactID,
 		interaction.Type,
+		interaction.Subject,
+		interaction.Duration,
+		interaction.Outcome,
+		interaction.FollowUp,
 		interaction.Description,
 		interaction.InteractionAt,
+		interaction.FollowUpDate,
 	)
 	if err != nil {
 		log.Printf("Error inserting interaction: %v", err)
@@ -90,10 +99,24 @@ func (c *CRMHandlers) GetInteraction(w http.ResponseWriter, r *http.Request) {
 
 	db := c.DB
 	var interaction models.Interaction
-	err = db.QueryRow(`SELECT id, user_id, contact_id, type, description, interaction_at, created_at FROM interactions WHERE id = ? AND user_id = ?`,
-		interactionID, userID).Scan(
-		&interaction.ID, &interaction.UserID, &interaction.ContactID, &interaction.Type,
-		&interaction.Description, &interaction.InteractionAt, &interaction.CreatedAt,
+	err = db.QueryRow(`
+  SELECT id, user_id, contact_id, type, subject, duration, outcome, follow_up, description, interaction_at, follow_up_date, created_at 
+  FROM interactions 
+  WHERE id = ? AND user_id = ?`,
+		interactionID, userID,
+	).Scan(
+		&interaction.ID,
+		&interaction.UserID,
+		&interaction.ContactID,
+		&interaction.Type,
+		&interaction.Subject,
+		&interaction.Duration,
+		&interaction.Outcome,
+		&interaction.FollowUp,
+		&interaction.Description,
+		&interaction.InteractionAt,
+		&interaction.FollowUpDate,
+		&interaction.CreatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		utils.RespondError(w, http.StatusNotFound, "Interaction not found or unauthorized")
@@ -117,12 +140,14 @@ func (c *CRMHandlers) ListInteractions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	db := c.DB
-	query := `SELECT id, user_id, contact_id, type, description, interaction_at, created_at FROM interactions WHERE user_id = ?`
+	query := `
+  SELECT id, user_id, contact_id, type, subject, duration, outcome, follow_up, description, interaction_at, follow_up_date, created_at 
+  FROM interactions 
+  WHERE user_id = ?
+`
 	args := []interface{}{userID}
 
-	// Optional filtering by contact_id
-	contactIDStr := r.URL.Query().Get("contact_id")
-	if contactIDStr != "" {
+	if contactIDStr := r.URL.Query().Get("contact_id"); contactIDStr != "" {
 		contactID, err := strconv.Atoi(contactIDStr)
 		if err != nil {
 			utils.RespondError(w, http.StatusBadRequest, "Invalid contact_id parameter")
@@ -144,8 +169,18 @@ func (c *CRMHandlers) ListInteractions(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var interaction models.Interaction
 		if err := rows.Scan(
-			&interaction.ID, &interaction.UserID, &interaction.ContactID, &interaction.Type,
-			&interaction.Description, &interaction.InteractionAt, &interaction.CreatedAt,
+			&interaction.ID,
+			&interaction.UserID,
+			&interaction.ContactID,
+			&interaction.Type,
+			&interaction.Subject,
+			&interaction.Duration,
+			&interaction.Outcome,
+			&interaction.FollowUp,
+			&interaction.Description,
+			&interaction.InteractionAt,
+			&interaction.FollowUpDate,
+			&interaction.CreatedAt,
 		); err != nil {
 			log.Printf("Error scanning interaction row: %v", err)
 			continue
@@ -196,7 +231,11 @@ func (c *CRMHandlers) UpdateInteraction(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	stmt, err := db.Prepare(`UPDATE interactions SET contact_id = ?, type = ?, description = ?, interaction_at = ? WHERE id = ? AND user_id = ?`)
+	stmt, err := db.Prepare(`
+	  UPDATE interactions
+	  SET contact_id = ?, type = ?, subject = ?, duration = ?, outcome = ?, follow_up = ?, description = ?, interaction_at = ?, follow_up_date = ?
+	  WHERE id = ? AND user_id = ?
+	`)
 	if err != nil {
 		log.Printf("Error preparing statement: %v", err)
 		utils.RespondError(w, http.StatusInternalServerError, "Database error")
@@ -207,8 +246,13 @@ func (c *CRMHandlers) UpdateInteraction(w http.ResponseWriter, r *http.Request) 
 	result, err := stmt.Exec(
 		interaction.ContactID,
 		interaction.Type,
+		interaction.Subject,
+		interaction.Duration,
+		interaction.Outcome,
+		interaction.FollowUp,
 		interaction.Description,
 		interaction.InteractionAt,
+		interaction.FollowUpDate,
 		interaction.ID,
 		userID,
 	)

@@ -22,10 +22,10 @@ func (c *CRMHandlers) CreateTask(w http.ResponseWriter, r *http.Request) {
 
 	var task models.Task
 	if err := json.NewDecoder(r.Body).Decode(&task); err != nil {
-		utils.RespondError(w, http.StatusBadRequest, "Invalid request payload")
+		utils.RespondError(w, http.StatusBadRequest, "Invalid request payload: ")
 		return
 	}
-	task.UserID = userID // Assign the authenticated user's ID
+	task.UserID = userID
 
 	db := c.DB
 

@@ -9,7 +9,7 @@ type User struct {
 	ID           int    `json:"id"`
 	Username     string `json:"username"`
 	Email        string `json:"email"`
-	PasswordHash string `json:"-,omitempty"` // Don't expose password hash in JSON
+	PasswordHash string `json:"-,omitempty"`
 	FirstName    string `json:"first_name,omitempty"`
 	LastName     string `json:"last_name,omitempty"`
 	CreatedAt    string `json:"created_at,omitempty"`
@@ -107,10 +107,15 @@ type Interaction struct {
 	ID            int     `json:"id"`
 	UserID        int     `json:"user_id"`
 	ContactID     int     `json:"contact_id"`
-	Type          string  `json:"type"` // e.g., 'Call', 'Email', 'Meeting', 'Note'
-	Description   *string `json:"description,omitempty"`
-	InteractionAt *string `json:"interaction_at,omitempty"`
-	CreatedAt     string  `json:"created_at,omitempty"`
+	Type          string  `json:"type"`                     // e.g., "call", "email", etc.
+	Subject       string  `json:"subject"`                  // Required
+	Duration      int     `json:"duration"`                 // Default: 0
+	Outcome       string  `json:"outcome"`                  // Default: "none"
+	FollowUp      int     `json:"follow_up"`                // 0 or 1 (boolean-ish)
+	Description   *string `json:"description,omitempty"`    // Optional
+	InteractionAt *string `json:"interaction_at"`           // Default: CURRENT_TIMESTAMP
+	FollowUpDate  *string `json:"follow_up_date,omitempty"` // Optional
+	CreatedAt     string  `json:"created_at"`               // Default: CURRENT_TIMESTAMP
 }
 
 // RecentInteraction Dashboard recent interactions

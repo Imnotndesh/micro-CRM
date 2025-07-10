@@ -4,14 +4,12 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"github.com/gorilla/mux"
 	"log"
 	"micro-CRM/internal/models"
 	"micro-CRM/internal/utils"
 	"net/http"
 	"strconv"
-	"time"
-
-	"github.com/gorilla/mux"
 )
 
 // CreateTask handles the creation of a new task.
@@ -66,9 +64,12 @@ func (c *CRMHandlers) CreateTask(w http.ResponseWriter, r *http.Request) {
 
 	id, _ := result.LastInsertId()
 	task.ID = int(id)
-	task.CreatedAt = time.Now().Format(time.RFC3339)
-	task.UpdatedAt = task.CreatedAt
-
+	err = db.QueryRow("SELECT created_at, updated_at FROM tasks WHERE id = ?", id).Scan(&task.CreatedAt, &task.UpdatedAt)
+	if err != nil {
+		log.Printf("Failed to fetch timestamps: %v", err)
+		utils.RespondError(w, http.StatusInternalServerError, "Error fetching created task")
+		return
+	}
 	utils.RespondJSON(w, http.StatusCreated, task)
 }
 
@@ -232,7 +233,14 @@ func (c *CRMHandlers) UpdateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	task.UpdatedAt = time.Now().Format(time.RFC3339)
+	// Fetch latest updated_at from DB
+	err = db.QueryRow("SELECT updated_at FROM tasks WHERE id = ?", task.ID).Scan(&task.UpdatedAt)
+	if err != nil {
+		log.Printf("Failed to fetch updated timestamp: %v", err)
+		utils.RespondError(w, http.StatusInternalServerError, "Could not retrieve updated task")
+		return
+	}
+
 	utils.RespondJSON(w, http.StatusOK, task)
 }
 

@@ -114,6 +114,8 @@ func (a *Api) SetupDashboardRoutes() {
 	a.dashRouter.HandleFunc("/stats", a.CRMHandlers.GetDashboardStats).Methods("GET")
 	a.dashRouter.HandleFunc("/pipeline", a.CRMHandlers.GetPipelineData).Methods("GET")
 	a.dashRouter.HandleFunc("/interactions", a.CRMHandlers.GetInteractionTrends).Methods("GET")
+	a.dashRouter.HandleFunc("/recent-interactions", a.CRMHandlers.GetRecentInteractions).Methods("GET")
+	a.dashRouter.HandleFunc("/suggested-contacts", a.CRMHandlers.GetSuggestedContacts).Methods("GET")
 }
 func (a *Api) SetupLogger() {
 	a.log = logger.NewConsoleLogger(os.Stderr, "[CRM-API]", 0, logger.LogLevelInfo)

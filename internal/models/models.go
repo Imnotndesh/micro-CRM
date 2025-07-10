@@ -1,6 +1,8 @@
 package models
 
-import "database/sql"
+import (
+	"database/sql"
+)
 
 // User represents a user in the system.
 type User struct {
@@ -67,35 +69,37 @@ type UserDeleteResponse struct {
 
 // Company represents a company record.
 type Company struct {
-	ID            int     `json:"id"`
-	UserID        int     `json:"user_id"` // Owner of the company record
-	Name          string  `json:"name"`
-	Website       *string `json:"website,omitempty"`
-	Industry      *string `json:"industry,omitempty"`
-	Address       *string `json:"address,omitempty"`
-	PhoneNumber   *string `json:"phone_number,omitempty"`
-	CreatedAt     string  `json:"created_at,omitempty"`
-	UpdatedAt     string  `json:"updated_at,omitempty"`
-	PipelineStage string  `json:"pipeline_stage,omitempty"`
+	ID            int     `json:"id" db:"id"`
+	UserID        int     `json:"user_id" db:"user_id"`
+	Name          string  `json:"name" db:"name"`
+	Website       *string `json:"website,omitempty" db:"website"`
+	Industry      *string `json:"industry,omitempty" db:"industry"`
+	Notes         *string `json:"notes,omitempty" db:"notes"`
+	CompanySize   *int    `json:"company_size,omitempty" db:"company_size"`
+	Address       *string `json:"address,omitempty" db:"address"`
+	PhoneNumber   *string `json:"phone_number,omitempty" db:"phone_number"`
+	CreatedAt     string  `json:"created_at" db:"created_at"`
+	UpdatedAt     string  `json:"updated_at" db:"updated_at"`
+	PipelineStage string  `json:"pipeline_stage" db:"pipeline_stage"`
 }
 
 // Contact represents a contact person.
 type Contact struct {
 	ID                    int     `json:"id"`
-	UserID                int     `json:"user_id"` // Owner of the contact record
-	CompanyID             *int    `json:"company_id,omitempty"`
+	UserID                int     `json:"user_id"`
+	CompanyID             *int    `json:"company_id,omitempty"` // Nullable FK
 	FirstName             string  `json:"first_name"`
 	LastName              string  `json:"last_name"`
 	Email                 *string `json:"email,omitempty"`
 	PhoneNumber           *string `json:"phone_number,omitempty"`
 	JobTitle              *string `json:"job_title,omitempty"`
 	Notes                 *string `json:"notes,omitempty"`
-	CreatedAt             string  `json:"created_at,omitempty"`
-	UpdatedAt             string  `json:"updated_at,omitempty"`
+	CreatedAt             string  `json:"created_at"`
+	UpdatedAt             string  `json:"updated_at"`
 	LastInteractionAt     *string `json:"last_interaction_at,omitempty"`
 	NextActionAt          *string `json:"next_action_at,omitempty"`
 	NextActionDescription *string `json:"next_action_description,omitempty"`
-	PipelineStage         string  `json:"pipeline_stage,omitempty"`
+	PipelineStage         *string `json:"pipeline_stage,omitempty"`
 }
 
 // Interaction represents a recorded interaction with a contact.
@@ -109,18 +113,38 @@ type Interaction struct {
 	CreatedAt     string  `json:"created_at,omitempty"`
 }
 
+// RecentInteraction Dashboard recent interactions
+type RecentInteraction struct {
+	ContactID     int     `json:"contact_id"`
+	FirstName     string  `json:"first_name"`
+	LastName      string  `json:"last_name"`
+	Type          string  `json:"type"`
+	Description   *string `json:"description,omitempty"`
+	Duration      *int    `json:"duration,omitempty"`
+	InteractionAt *string `json:"interaction_at,omitempty"`
+}
+
+type SuggestedContact struct {
+	ID        int     `json:"id"`
+	FirstName string  `json:"first_name"`
+	LastName  string  `json:"last_name"`
+	Email     *string `json:"email,omitempty"`
+	Company   *string `json:"company,omitempty"`
+	NextDue   *string `json:"next_due,omitempty"`
+}
+
 // Task represents a task related to a contact or general.
 type Task struct {
 	ID          int     `json:"id"`
 	UserID      int     `json:"user_id"`
-	ContactID   *int    `json:"contact_id,omitempty"` // Can be NULL if not associated with a specific contact
+	ContactID   *int    `json:"contact_id,omitempty"` // nullable foreign key
 	Title       string  `json:"title"`
 	Description *string `json:"description,omitempty"`
 	DueDate     *string `json:"due_date,omitempty"`
-	Status      string  `json:"status,omitempty"`   // e.g., 'To Do', 'In Progress', 'Done'
-	Priority    string  `json:"priority,omitempty"` // e.g., 'Low', 'Medium', 'High'
-	CreatedAt   string  `json:"created_at,omitempty"`
-	UpdatedAt   string  `json:"updated_at,omitempty"`
+	Status      string  `json:"status"`
+	Priority    string  `json:"priority"`
+	CreatedAt   string  `json:"created_at"`
+	UpdatedAt   string  `json:"updated_at"`
 }
 
 // File represents metadata for an uploaded file.

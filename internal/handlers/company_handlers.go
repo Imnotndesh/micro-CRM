@@ -30,19 +30,17 @@ func (c *CRMHandlers) CreateCompany(w http.ResponseWriter, r *http.Request) {
 	company.UserID = userID // Assign the authenticated user's ID
 
 	db := c.DB
-	stmt, err := db.Prepare("INSERT INTO companies (user_id, name, website, industry, address, phone_number, pipeline_stage) VALUES (?, ?, ?, ?, ?, ?, ?)")
-	if err != nil {
-		log.Printf("Error preparing statement: %v", err)
-		utils.RespondError(w, http.StatusInternalServerError, "Database error")
-		return
-	}
-	defer stmt.Close()
-
+	stmt, err := db.Prepare(`
+	INSERT INTO companies (user_id, name, website, industry, notes, company_size, address, phone_number, pipeline_stage)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+`)
 	result, err := stmt.Exec(
 		company.UserID,
 		company.Name,
 		company.Website,
 		company.Industry,
+		company.Notes,
+		company.CompanySize,
 		company.Address,
 		company.PhoneNumber,
 		company.PipelineStage,
@@ -78,10 +76,14 @@ func (c *CRMHandlers) GetCompany(w http.ResponseWriter, r *http.Request) {
 
 	db := c.DB
 	var company models.Company
-	err = db.QueryRow("SELECT id, user_id, name, website, industry, address, phone_number, created_at, updated_at, pipeline_stage FROM companies WHERE id = ? AND user_id = ?",
-		companyID, userID).Scan(
+	err = db.QueryRow(`
+	SELECT id, user_id, name, website, industry, notes, company_size, address, phone_number, created_at, updated_at, pipeline_stage
+	FROM companies WHERE id = ? AND user_id = ?`,
+		companyID, userID,
+	).Scan(
 		&company.ID, &company.UserID, &company.Name, &company.Website, &company.Industry,
-		&company.Address, &company.PhoneNumber, &company.CreatedAt, &company.UpdatedAt, &company.PipelineStage,
+		&company.Notes, &company.CompanySize, &company.Address, &company.PhoneNumber,
+		&company.CreatedAt, &company.UpdatedAt, &company.PipelineStage,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		utils.RespondError(w, http.StatusNotFound, "Company not found or unauthorized")
@@ -105,7 +107,11 @@ func (c *CRMHandlers) ListCompanies(w http.ResponseWriter, r *http.Request) {
 	}
 
 	db := c.DB
-	rows, err := db.Query("SELECT id, user_id, name, website, industry, address, phone_number, created_at, updated_at, pipeline_stage FROM companies WHERE user_id = ?", userID)
+	rows, err := db.Query(`
+	SELECT id, user_id, name, website, industry, notes, company_size, address, phone_number, created_at, updated_at, pipeline_stage
+	FROM companies WHERE user_id = ?`,
+		userID,
+	)
 	if err != nil {
 		log.Printf("Error querying companies: %v", err)
 		utils.RespondError(w, http.StatusInternalServerError, "Database error")
@@ -118,7 +124,8 @@ func (c *CRMHandlers) ListCompanies(w http.ResponseWriter, r *http.Request) {
 		var company models.Company
 		if err := rows.Scan(
 			&company.ID, &company.UserID, &company.Name, &company.Website, &company.Industry,
-			&company.Address, &company.PhoneNumber, &company.CreatedAt, &company.UpdatedAt, &company.PipelineStage,
+			&company.Notes, &company.CompanySize, &company.Address, &company.PhoneNumber,
+			&company.CreatedAt, &company.UpdatedAt, &company.PipelineStage,
 		); err != nil {
 			log.Printf("Error scanning company row: %v", err)
 			continue
@@ -158,7 +165,10 @@ func (c *CRMHandlers) UpdateCompany(w http.ResponseWriter, r *http.Request) {
 	company.ID = companyID // Ensure the ID from the URL is used
 
 	db := c.DB
-	stmt, err := db.Prepare(`UPDATE companies SET name = ?, website = ?, industry = ?, address = ?, phone_number = ?, pipeline_stage = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?`)
+	stmt, err := db.Prepare(`
+	UPDATE companies SET name = ?, website = ?, industry = ?, notes = ?, company_size = ?, address = ?, phone_number = ?, pipeline_stage = ?, updated_at = CURRENT_TIMESTAMP
+	WHERE id = ? AND user_id = ?
+	`)
 	if err != nil {
 		log.Printf("Error preparing statement: %v", err)
 		utils.RespondError(w, http.StatusInternalServerError, "Database error")
@@ -170,6 +180,8 @@ func (c *CRMHandlers) UpdateCompany(w http.ResponseWriter, r *http.Request) {
 		company.Name,
 		company.Website,
 		company.Industry,
+		company.Notes,
+		company.CompanySize,
 		company.Address,
 		company.PhoneNumber,
 		company.PipelineStage,

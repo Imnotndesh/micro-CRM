@@ -80,15 +80,22 @@ func (c *CRMHandlers) GetContact(w http.ResponseWriter, r *http.Request) {
 		utils.RespondError(w, http.StatusBadRequest, "Invalid contact ID")
 		return
 	}
-
-	db := c.DB
 	var contact models.Contact
-	err = db.QueryRow(`SELECT id, user_id, company_id, first_name, last_name, email, phone_number, job_title, notes, created_at, updated_at, last_interaction_at, next_action_at, next_action_description, pipeline_stage FROM contacts WHERE id = ? AND user_id = ?`,
-		contactID, userID).Scan(
+	query := `
+		SELECT 
+			id, user_id, company_id, first_name, last_name, email,
+			phone_number, job_title, notes, created_at, updated_at,
+			last_interaction_at, next_action_at, next_action_description, pipeline_stage
+		FROM contacts 
+		WHERE id = ? AND user_id = ?
+	`
+
+	err = c.DB.QueryRow(query, contactID, userID).Scan(
 		&contact.ID, &contact.UserID, &contact.CompanyID, &contact.FirstName, &contact.LastName, &contact.Email,
 		&contact.PhoneNumber, &contact.JobTitle, &contact.Notes, &contact.CreatedAt, &contact.UpdatedAt,
 		&contact.LastInteractionAt, &contact.NextActionAt, &contact.NextActionDescription, &contact.PipelineStage,
 	)
+
 	if errors.Is(err, sql.ErrNoRows) {
 		utils.RespondError(w, http.StatusNotFound, "Contact not found or unauthorized")
 		return
@@ -110,8 +117,16 @@ func (c *CRMHandlers) ListContacts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	db := c.DB
-	rows, err := db.Query(`SELECT id, user_id, company_id, first_name, last_name, email, phone_number, job_title, notes, created_at, updated_at, last_interaction_at, next_action_at, next_action_description, pipeline_stage FROM contacts WHERE user_id = ?`, userID)
+	query := `
+		SELECT 
+			id, user_id, company_id, first_name, last_name, email,
+			phone_number, job_title, notes, created_at, updated_at,
+			last_interaction_at, next_action_at, next_action_description, pipeline_stage
+		FROM contacts
+		WHERE user_id = ?
+	`
+
+	rows, err := c.DB.Query(query, userID)
 	if err != nil {
 		log.Printf("Error querying contacts: %v", err)
 		utils.RespondError(w, http.StatusInternalServerError, "Database error")
@@ -120,22 +135,36 @@ func (c *CRMHandlers) ListContacts(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 
 	var contacts []models.Contact
+
 	for rows.Next() {
 		var contact models.Contact
-		if err := rows.Scan(
-			&contact.ID, &contact.UserID, &contact.CompanyID, &contact.FirstName, &contact.LastName, &contact.Email,
-			&contact.PhoneNumber, &contact.JobTitle, &contact.Notes, &contact.CreatedAt, &contact.UpdatedAt,
-			&contact.LastInteractionAt, &contact.NextActionAt, &contact.NextActionDescription, &contact.PipelineStage,
-		); err != nil {
+		err := rows.Scan(
+			&contact.ID,
+			&contact.UserID,
+			&contact.CompanyID,
+			&contact.FirstName,
+			&contact.LastName,
+			&contact.Email,
+			&contact.PhoneNumber,
+			&contact.JobTitle,
+			&contact.Notes,
+			&contact.CreatedAt,
+			&contact.UpdatedAt,
+			&contact.LastInteractionAt,
+			&contact.NextActionAt,
+			&contact.NextActionDescription,
+			&contact.PipelineStage,
+		)
+		if err != nil {
 			log.Printf("Error scanning contact row: %v", err)
-			continue
+			continue // skip corrupted row
 		}
 		contacts = append(contacts, contact)
 	}
 
-	if err = rows.Err(); err != nil {
-		log.Printf("Error iterating contact rows: %v", err)
-		utils.RespondError(w, http.StatusInternalServerError, "Database error")
+	if err := rows.Err(); err != nil {
+		log.Printf("Row iteration error: %v", err)
+		utils.RespondError(w, http.StatusInternalServerError, "Database iteration error")
 		return
 	}
 

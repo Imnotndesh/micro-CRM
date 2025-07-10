@@ -26,6 +26,8 @@ CREATE TABLE IF NOT EXISTS companies (
     name TEXT NOT NULL,
     website TEXT,
     industry TEXT,
+	notes TEXT DEFAULT 'none',
+	company_size INTEGER,
     address TEXT,
     phone_number TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -66,9 +68,14 @@ CREATE TABLE IF NOT EXISTS interactions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL,
     contact_id INTEGER NOT NULL,
-    type TEXT NOT NULL, -- e.g., 'Call', 'Email', 'Meeting', 'Note'
+    type TEXT NOT NULL,
+	subject TEXT NOT NULL,
+	duration INTEGER DEFAULT 0,
+	outcome TEXT DEFAULT 'none',
+	follow_up INTEGER DEFAULT 0,
     description TEXT,
     interaction_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	follow_up_date TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
     FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE
@@ -115,6 +122,18 @@ CREATE TABLE IF NOT EXISTS files (
 CREATE INDEX IF NOT EXISTS idx_files_user_id ON files(user_id);
 CREATE INDEX IF NOT EXISTS idx_files_contact_id ON files(contact_id);
 CREATE INDEX IF NOT EXISTS idx_files_company_id ON files(company_id);
+
+CREATE TRIGGER IF NOT EXISTS update_contact_on_interaction_insert
+AFTER INSERT ON interactions
+FOR EACH ROW
+BEGIN
+  UPDATE contacts
+  SET
+    last_interaction_at = NEW.interaction_at,
+    next_action_at = NEW.follow_up_date,
+    next_action_description = NEW.description
+  WHERE id = NEW.contact_id;
+END;
 `
 
-// ApplyMigrations executes the SQL schema creatio
+// ApplyMigrations executes the SQL schema creation

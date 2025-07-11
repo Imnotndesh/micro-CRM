@@ -1,0 +1,9 @@
+version : '3.8'
+services:
+  micro-crm-api:
+    image : ghcr.io/imnotndesh/micro-crm:latest
+    ports:
+      - "9080:9080"
+    volumes:
+      - "./database:/app/database:z"
+      - "./certs:/app/certs:z"

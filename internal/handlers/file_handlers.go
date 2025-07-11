@@ -65,6 +65,7 @@ func (c *CRMHandlers) UploadFileHandler(w http.ResponseWriter, r *http.Request) 
 	allowedMIMETypes := map[string]bool{
 		"image/jpeg":         true,
 		"image/png":          true,
+		"image/svg+xml":      true,
 		"application/pdf":    true,
 		"text/plain":         true,
 		"application/msword": true, // .doc
@@ -73,18 +74,38 @@ func (c *CRMHandlers) UploadFileHandler(w http.ResponseWriter, r *http.Request) 
 		"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": true, // .xlsx
 	}
 
-	fileType := handler.Header.Get("Content-Type")
-	if !allowedMIMETypes[fileType] {
-		c.Log.Warn("UploadFile: Disallowed file type uploaded: %s", fileType)
-		utils.RespondError(w, http.StatusBadRequest, "Unsupported file type. Allowed: JPEG, PNG, PDF, TXT, Word, Excel.")
+	// Read the first 512 bytes for MIME sniffing
+	buffer := make([]byte, 512)
+	_, err = file.Read(buffer)
+	if err != nil && err != io.EOF {
+		c.Log.Warn("UploadFile: Unable to read file for content type detection: %v", err)
+		utils.RespondError(w, http.StatusBadRequest, "Failed to read file content")
 		return
 	}
 
+	// Reset file reader since we read from it
+	// Use Seek to rewind
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		c.Log.Warn("UploadFile: Failed to rewind file after reading header: %v", err)
+		utils.RespondError(w, http.StatusInternalServerError, "Failed to process file")
+		return
+	}
+
+	fileType := http.DetectContentType(buffer)
+	if !allowedMIMETypes[fileType] {
+		c.Log.Warn("UploadFile: Disallowed file type uploaded: %s", fileType)
+		utils.RespondError(w, http.StatusBadRequest, "Unsupported file type. Allowed: JPEG, PNG, PDF, TXT, Word, Excel, SVG.")
+		return
+	}
 	// 5. Create a unique filename on the server to prevent conflicts and ensure safety
-	filename := handler.Filename
-	ext := filepath.Ext(filename)
-	base := filename[:len(filename)-len(ext)]
-	uniqueFilename := fmt.Sprintf("%s-%d%s", base, time.Now().UnixNano(), ext) // Add nanosecond timestamp for uniqueness
+	rawFilename := handler.Filename
+	cleanFilename := filepath.Base(rawFilename)   // removes any path traversal
+	base := utils.SanitizeFilename(cleanFilename) // we'll create this function next
+
+	ext := filepath.Ext(base)
+	name := base[:len(base)-len(ext)]
+	uniqueFilename := fmt.Sprintf("%s-%d%s", name, time.Now().UnixNano(), ext)
+	// Add nanosecond timestamp for uniqueness
 	storagePath := filepath.Join(uploadDir, uniqueFilename)
 
 	// 6. Create the destination file on the server
@@ -133,20 +154,15 @@ func (c *CRMHandlers) UploadFileHandler(w http.ResponseWriter, r *http.Request) 
 
 	// 9. Validate contact_id or company_id belongs to the user if provided
 	if contactID != nil && *contactID != 0 {
-		var exists bool
-		err := c.DB.QueryRow("SELECT EXISTS(SELECT 1 FROM contacts WHERE id = ? AND user_id = ?)", *contactID, userID).Scan(&exists)
-		if err != nil || !exists {
-			c.Log.Warn("UploadFile: Contact ID %d not found or does not belong to user %d", *contactID, userID)
-			utils.RespondError(w, http.StatusForbidden, "Associated contact not found or does not belong to the user")
+		if err := utils.ValidateOwnership(c.DB, "contacts", *contactID, userID); err != nil {
+			utils.RespondError(w, http.StatusForbidden, err.Error())
 			return
 		}
 	}
+
 	if companyID != nil && *companyID != 0 {
-		var exists bool
-		err := c.DB.QueryRow("SELECT EXISTS(SELECT 1 FROM companies WHERE id = ? AND user_id = ?)", *companyID, userID).Scan(&exists)
-		if err != nil || !exists {
-			c.Log.Warn("UploadFile: Company ID %d not found or does not belong to user %d", *companyID, userID)
-			utils.RespondError(w, http.StatusForbidden, "Associated company not found or does not belong to the user")
+		if err := utils.ValidateOwnership(c.DB, "contacts", *companyID, userID); err != nil {
+			utils.RespondError(w, http.StatusForbidden, err.Error())
 			return
 		}
 	}
@@ -156,10 +172,10 @@ func (c *CRMHandlers) UploadFileHandler(w http.ResponseWriter, r *http.Request) 
 		UserID:      userID,
 		ContactID:   contactID,
 		CompanyID:   companyID,
-		FileName:    filename,                  // Original filename
-		StoragePath: storagePath,               // Unique path on server
-		FileType:    &fileType,                 // MIME type from header
-		FileSize:    intPointer(int(fileSize)), // Convert int64 to int, use helper
+		FileName:    cleanFilename,
+		StoragePath: storagePath,
+		FileType:    &fileType,
+		FileSize:    intPointer(int(fileSize)),
 	}
 
 	stmt, err := c.DB.Prepare(`INSERT INTO files (user_id, contact_id, company_id, file_name, storage_path, file_type, file_size) VALUES (?, ?, ?, ?, ?, ?, ?)`)
@@ -216,18 +232,14 @@ func (c *CRMHandlers) CreateFile(w http.ResponseWriter, r *http.Request) {
 
 	// Validate contact_id or company_id belongs to the user if provided
 	if file.ContactID != nil && *file.ContactID != 0 {
-		var exists bool
-		err := db.QueryRow("SELECT EXISTS(SELECT 1 FROM contacts WHERE id = ? AND user_id = ?)", *file.ContactID, userID).Scan(&exists)
-		if err != nil || !exists {
-			utils.RespondError(w, http.StatusForbidden, "Associated contact not found or does not belong to the user")
+		if err := utils.ValidateOwnership(c.DB, "contacts", *file.ContactID, userID); err != nil {
+			utils.RespondError(w, http.StatusForbidden, err.Error())
 			return
 		}
 	}
 	if file.CompanyID != nil && *file.CompanyID != 0 {
-		var exists bool
-		err := db.QueryRow("SELECT EXISTS(SELECT 1 FROM companies WHERE id = ? AND user_id = ?)", *file.CompanyID, userID).Scan(&exists)
-		if err != nil || !exists {
-			utils.RespondError(w, http.StatusForbidden, "Associated company not found or does not belong to the user")
+		if err := utils.ValidateOwnership(c.DB, "contacts", *file.CompanyID, userID); err != nil {
+			utils.RespondError(w, http.StatusForbidden, err.Error())
 			return
 		}
 	}
@@ -378,53 +390,61 @@ func (c *CRMHandlers) UpdateFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var file models.File
-	if err := json.NewDecoder(r.Body).Decode(&file); err != nil {
+	var payload struct {
+		FileName  string `json:"file_name"`
+		ContactID *int   `json:"contact_id,omitempty"`
+		CompanyID *int   `json:"company_id,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		utils.RespondError(w, http.StatusBadRequest, "Invalid request payload")
 		return
 	}
-	file.ID = fileID // Ensure the ID from the URL is used
 
-	db := c.DB
+	// Optional validation
+	if payload.FileName == "" {
+		utils.RespondError(w, http.StatusBadRequest, "File name is required")
+		return
+	}
 
-	// Validate contact_id or company_id belongs to the user if provided in payload
-	if file.ContactID != nil && *file.ContactID != 0 {
+	// Validate ownership of contact_id and company_id
+	if payload.ContactID != nil && *payload.ContactID != 0 {
 		var exists bool
-		err := db.QueryRow("SELECT EXISTS(SELECT 1 FROM contacts WHERE id = ? AND user_id = ?)", *file.ContactID, userID).Scan(&exists)
+		err := c.DB.QueryRow("SELECT EXISTS(SELECT 1 FROM contacts WHERE id = ? AND user_id = ?)", *payload.ContactID, userID).Scan(&exists)
 		if err != nil || !exists {
 			utils.RespondError(w, http.StatusForbidden, "Associated contact not found or does not belong to the user")
 			return
 		}
 	}
-	if file.CompanyID != nil && *file.CompanyID != 0 {
+	if payload.CompanyID != nil && *payload.CompanyID != 0 {
 		var exists bool
-		err := db.QueryRow("SELECT EXISTS(SELECT 1 FROM companies WHERE id = ? AND user_id = ?)", *file.CompanyID, userID).Scan(&exists)
+		err := c.DB.QueryRow("SELECT EXISTS(SELECT 1 FROM companies WHERE id = ? AND user_id = ?)", *payload.CompanyID, userID).Scan(&exists)
 		if err != nil || !exists {
 			utils.RespondError(w, http.StatusForbidden, "Associated company not found or does not belong to the user")
 			return
 		}
 	}
 
-	stmt, err := db.Prepare(`UPDATE files SET contact_id = ?, company_id = ?, file_name = ?, storage_path = ?, file_type = ?, file_size = ? WHERE id = ? AND user_id = ?`)
+	stmt, err := c.DB.Prepare(`
+		UPDATE files
+		SET contact_id = ?, company_id = ?, file_name = ?
+		WHERE id = ? AND user_id = ?
+	`)
 	if err != nil {
-		log.Printf("Error preparing statement: %v", err)
+		c.Log.Error("UpdateFile: Prepare failed: %v", err)
 		utils.RespondError(w, http.StatusInternalServerError, "Database error")
 		return
 	}
 	defer stmt.Close()
 
 	result, err := stmt.Exec(
-		file.ContactID,
-		file.CompanyID,
-		file.FileName,
-		file.StoragePath,
-		file.FileType,
-		file.FileSize,
-		file.ID,
+		payload.ContactID,
+		payload.CompanyID,
+		payload.FileName,
+		fileID,
 		userID,
 	)
 	if err != nil {
-		log.Printf("Error updating file: %v", err)
+		c.Log.Error("UpdateFile: Exec failed: %v", err)
 		utils.RespondError(w, http.StatusInternalServerError, "Failed to update file record")
 		return
 	}
@@ -435,7 +455,16 @@ func (c *CRMHandlers) UpdateFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	utils.RespondJSON(w, http.StatusOK, file)
+	utils.RespondJSON(w, http.StatusOK, map[string]string{"status": "updated file"})
+}
+func (c *CRMHandlers) CleanupOrphanedFiles(w http.ResponseWriter, r *http.Request) {
+	err := utils.CleanOrphanedFiles(c.DB, uploadDir)
+	if err != nil {
+		c.Log.Error("CleanupOrphanedFiles: %v", err)
+		utils.RespondError(w, http.StatusInternalServerError, "Failed to clean orphaned files")
+		return
+	}
+	utils.RespondJSON(w, http.StatusOK, map[string]string{"status": "cleanup completed"})
 }
 
 // DeleteFile deletes a file record.
@@ -468,4 +497,12 @@ func (c *CRMHandlers) DeleteFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	utils.RespondJSON(w, http.StatusNoContent, nil)
+	// Clear out orphaned files
+	go func() {
+		c.Log.Info("Running Files cleanup")
+		err = utils.CleanOrphanedFiles(c.DB, uploadDir)
+		if err != nil {
+			return
+		}
+	}()
 }

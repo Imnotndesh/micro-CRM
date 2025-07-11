@@ -7,3 +7,4 @@ services:
     volumes:
       - "./database:/app/database:z"
       - "./certs:/app/certs:z"
+      - "./uploads:/app/uploads:z"

@@ -27,6 +27,7 @@ type Api struct {
 	router      *mux.Router
 	authRouter  *mux.Router
 	dashRouter  *mux.Router
+	adminRouter *mux.Router
 	Params      models.EnvParams
 	handlers.CRMHandlers
 	database.DBManager
@@ -46,6 +47,10 @@ func (a *Api) SetupDashRouter() {
 	a.dashRouter = a.router.PathPrefix("/dash").Subrouter()
 	a.dashRouter.Use(middleware.AuthMiddleware)
 }
+func (a *Api) SetupAdminRouter() {
+	a.adminRouter = a.router.PathPrefix("/admin").Subrouter()
+	a.dashRouter.Use(middleware.AuthMiddleware)
+}
 func (a *Api) SetupAllRoutes() {
 	// Setup auth router
 	a.SetupAuthRouter()
@@ -53,13 +58,16 @@ func (a *Api) SetupAllRoutes() {
 	// Setup Dashboard router
 	a.SetupDashRouter()
 
+	// Setup Admin router
+	a.SetupAdminRouter()
+
 	// Setup routes
 	a.SetupAuthenticationRoutes()
 	a.SetupCompanyRoutes()
 	a.SetupContactRoutes()
 	a.SetupFileRoutes()
 	a.SetupTaskRoutes()
-	a.SetupHealthRoutes()
+	a.SetupAdminRoutes()
 	a.SetupInteractionRoutes()
 	a.SetupDashboardRoutes()
 	a.SetupProfileRoutes()
@@ -89,6 +97,9 @@ func (a *Api) SetupFileRoutes() {
 	a.authRouter.HandleFunc("/files/{id}", a.CRMHandlers.GetFile).Methods("GET")
 	a.authRouter.HandleFunc("/files/{id}", a.CRMHandlers.UpdateFile).Methods("PUT")
 	a.authRouter.HandleFunc("/files/{id}", a.CRMHandlers.DeleteFile).Methods("DELETE")
+
+	// TODO: restructure with new admin router in mind
+	a.adminRouter.HandleFunc("/files/cleanup", a.CRMHandlers.CleanupOrphanedFiles).Methods("DELETE")
 }
 func (a *Api) SetupProfileRoutes() {
 	a.authRouter.HandleFunc("/profile", a.CRMHandlers.GetUserInfo).Methods("GET")
@@ -123,9 +134,9 @@ func (a *Api) SetupLogger() {
 	a.DBManager.Log = a.log
 	a.log.Info("Custom Logger initialized")
 }
-func (a *Api) SetupHealthRoutes() {
-	a.router.HandleFunc("/health/API", a.CRMHandlers.Hello).Methods("GET")
-	a.router.HandleFunc("/health/DB", a.CRMHandlers.DBPing).Methods("GET")
+func (a *Api) SetupAdminRoutes() {
+	a.adminRouter.HandleFunc("/health/API", a.CRMHandlers.Hello).Methods("GET")
+	a.adminRouter.HandleFunc("/health/DB", a.CRMHandlers.DBPing).Methods("GET")
 }
 func (a *Api) Start() {
 	var startErr error

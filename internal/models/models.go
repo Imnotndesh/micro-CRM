@@ -154,15 +154,16 @@ type Task struct {
 
 // File represents metadata for an uploaded file.
 type File struct {
-	ID          int     `json:"id"`
-	UserID      int     `json:"user_id"`
-	ContactID   *int    `json:"contact_id,omitempty"`
-	CompanyID   *int    `json:"company_id,omitempty"`
-	FileName    string  `json:"file_name"`
-	StoragePath string  `json:"storage_path"` // Path on the server's filesystem
-	FileType    *string `json:"file_type,omitempty"`
-	FileSize    *int    `json:"file_size,omitempty"` // In bytes
-	UploadedAt  string  `json:"uploaded_at,omitempty"`
+	ID            int     `json:"id"`
+	UserID        int     `json:"user_id"`
+	ContactID     *int    `json:"contact_id,omitempty"`
+	CompanyID     *int    `json:"company_id,omitempty"`
+	FileName      string  `json:"file_name"`
+	StoragePath   string  `json:"storage_path"` // Path on the server's filesystem
+	FileType      *string `json:"file_type,omitempty"`
+	FileSize      *int    `json:"file_size,omitempty"` // In bytes
+	UploadedAt    string  `json:"uploaded_at,omitempty"`
+	InteractionID *int    `json:"interaction_id,omitempty"`
 }
 type EnvParams struct {
 	DbPath       string
@@ -185,7 +186,7 @@ type DashboardStats struct {
 	TotalContacts        int `json:"totalContacts"`
 	TotalCompanies       int `json:"totalCompanies"`
 	TotalTasks           int `json:"totalTasks"`
-	CompletedTasks       int `json:"completedTasks"`
+	PendingTasks         int `json:"pendingTasks"`
 	UpcomingInteractions int `json:"upcomingInteractions"`
 	FilesUploaded        int `json:"filesUploaded"`
 }

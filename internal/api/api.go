@@ -91,7 +91,7 @@ func (a *Api) SetupContactRoutes() {
 	a.authRouter.HandleFunc("/contacts/{id}", a.CRMHandlers.DeleteContact).Methods("DELETE")
 }
 func (a *Api) SetupFileRoutes() {
-	a.authRouter.HandleFunc("/files", a.CRMHandlers.CreateFile).Methods("POST")
+	// a.authRouter.HandleFunc("/files", a.CRMHandlers.CreateFile).Methods("POST") # Will reuse this later
 	a.authRouter.HandleFunc("/files", a.CRMHandlers.ListFiles).Methods("GET")
 	a.authRouter.HandleFunc("/files/upload", a.CRMHandlers.UploadFileHandler).Methods("POST")
 	a.authRouter.HandleFunc("/files/{id}", a.CRMHandlers.GetFile).Methods("GET")

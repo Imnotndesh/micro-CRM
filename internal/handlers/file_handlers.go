@@ -60,8 +60,7 @@ func (c *CRMHandlers) UploadFileHandler(w http.ResponseWriter, r *http.Request) 
 	}
 	defer file.Close() // Ensure the uploaded file is closed
 
-	// 4. Validate file type (simple example: only allow certain MIME types)
-	// You should implement more robust content-type sniffing if security is critical
+	// Validate file type (simple example: only allow certain MIME types)
 	allowedMIMETypes := map[string]bool{
 		"image/jpeg":         true,
 		"image/png":          true,
@@ -127,13 +126,12 @@ func (c *CRMHandlers) UploadFileHandler(w http.ResponseWriter, r *http.Request) 
 
 	c.Log.Info("UploadFile: Successfully saved file: %s (Size: %d bytes)", uniqueFilename, fileSize)
 
-	// 8. Extract optional metadata from form fields
+	// Extract optional metadata
 	contactIDStr := r.FormValue("contact_id")
 	var contactID *int
 	if contactIDStr != "" {
 		id, err := strconv.Atoi(contactIDStr)
 		if err != nil {
-			c.Log.Warn("UploadFile: Invalid contact_id in form: ", err)
 			utils.RespondError(w, http.StatusBadRequest, "Invalid contact_id format")
 			return
 		}
@@ -145,23 +143,46 @@ func (c *CRMHandlers) UploadFileHandler(w http.ResponseWriter, r *http.Request) 
 	if companyIDStr != "" {
 		id, err := strconv.Atoi(companyIDStr)
 		if err != nil {
-			c.Log.Warn("UploadFile: Invalid company_id in form: %v", err)
 			utils.RespondError(w, http.StatusBadRequest, "Invalid company_id format")
 			return
 		}
 		companyID = &id
 	}
 
-	// 9. Validate contact_id or company_id belongs to the user if provided
-	if contactID != nil && *contactID != 0 {
+	interactionIDStr := r.FormValue("interaction_id")
+	var interactionID *int
+	if interactionIDStr != "" {
+		id, err := strconv.Atoi(interactionIDStr)
+		if err != nil {
+			utils.RespondError(w, http.StatusBadRequest, "Invalid interaction_id format")
+			return
+		}
+		interactionID = &id
+	}
+
+	// Check if at least one was provided
+	if contactID == nil && companyID == nil && interactionID == nil {
+		utils.RespondError(w, http.StatusBadRequest, "At least one of contact_id, company_id, or interaction_id must be provided")
+		return
+	}
+
+	// 9. Validate ownership to user
+	if contactID != nil {
 		if err := utils.ValidateOwnership(c.DB, "contacts", *contactID, userID); err != nil {
 			utils.RespondError(w, http.StatusForbidden, err.Error())
 			return
 		}
 	}
 
-	if companyID != nil && *companyID != 0 {
-		if err := utils.ValidateOwnership(c.DB, "contacts", *companyID, userID); err != nil {
+	if companyID != nil {
+		if err := utils.ValidateOwnership(c.DB, "companies", *companyID, userID); err != nil {
+			utils.RespondError(w, http.StatusForbidden, err.Error())
+			return
+		}
+	}
+
+	if interactionID != nil {
+		if err := utils.ValidateOwnership(c.DB, "interactions", *interactionID, userID); err != nil {
 			utils.RespondError(w, http.StatusForbidden, err.Error())
 			return
 		}
@@ -169,32 +190,24 @@ func (c *CRMHandlers) UploadFileHandler(w http.ResponseWriter, r *http.Request) 
 
 	// 10. Create the database record
 	fileRecord := models.File{
-		UserID:      userID,
-		ContactID:   contactID,
-		CompanyID:   companyID,
-		FileName:    cleanFilename,
-		StoragePath: storagePath,
-		FileType:    &fileType,
-		FileSize:    intPointer(int(fileSize)),
+		UserID:        userID,
+		ContactID:     contactID,
+		CompanyID:     companyID,
+		FileName:      cleanFilename,
+		StoragePath:   storagePath,
+		FileType:      &fileType,
+		FileSize:      intPointer(int(fileSize)),
+		InteractionID: interactionID,
 	}
 
-	stmt, err := c.DB.Prepare(`INSERT INTO files (user_id, contact_id, company_id, file_name, storage_path, file_type, file_size) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+	stmt, err := c.DB.Prepare(`INSERT INTO files (user_id, contact_id, company_id, interaction_id, file_name, storage_path, file_type, file_size) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		c.Log.Error("UploadFile: Error preparing statement: %v", err)
 		utils.RespondError(w, http.StatusInternalServerError, "Database error")
 		return
 	}
 	defer stmt.Close()
-
-	result, err := stmt.Exec(
-		fileRecord.UserID,
-		fileRecord.ContactID,
-		fileRecord.CompanyID,
-		fileRecord.FileName,
-		fileRecord.StoragePath,
-		fileRecord.FileType,
-		fileRecord.FileSize,
-	)
+	result, err := stmt.Exec(fileRecord.UserID, fileRecord.ContactID, fileRecord.CompanyID, fileRecord.InteractionID, fileRecord.FileName, fileRecord.StoragePath, fileRecord.FileType, fileRecord.FileSize)
 	if err != nil {
 		c.Log.Error("UploadFile: Error inserting file record: %v", err)
 		utils.RespondError(w, http.StatusInternalServerError, "Failed to create file record")
@@ -213,66 +226,67 @@ func intPointer(i int) *int {
 	return &i
 }
 
-// CreateFile handles the creation of a new file record (metadata only).
-func (c *CRMHandlers) CreateFile(w http.ResponseWriter, r *http.Request) {
-	userID, ok := r.Context().Value(models.UserIDContextKey).(int)
-	if !ok {
-		utils.RespondError(w, http.StatusUnauthorized, "User not authenticated")
-		return
-	}
-
-	var file models.File
-	if err := json.NewDecoder(r.Body).Decode(&file); err != nil {
-		utils.RespondError(w, http.StatusBadRequest, "Invalid request payload")
-		return
-	}
-	file.UserID = userID // Assign the authenticated user's ID
-
-	db := c.DB
-
-	// Validate contact_id or company_id belongs to the user if provided
-	if file.ContactID != nil && *file.ContactID != 0 {
-		if err := utils.ValidateOwnership(c.DB, "contacts", *file.ContactID, userID); err != nil {
-			utils.RespondError(w, http.StatusForbidden, err.Error())
-			return
-		}
-	}
-	if file.CompanyID != nil && *file.CompanyID != 0 {
-		if err := utils.ValidateOwnership(c.DB, "contacts", *file.CompanyID, userID); err != nil {
-			utils.RespondError(w, http.StatusForbidden, err.Error())
-			return
-		}
-	}
-
-	stmt, err := db.Prepare(`INSERT INTO files (user_id, contact_id, company_id, file_name, storage_path, file_type, file_size) VALUES (?, ?, ?, ?, ?, ?, ?)`)
-	if err != nil {
-		log.Printf("Error preparing statement: %v", err)
-		utils.RespondError(w, http.StatusInternalServerError, "Database error")
-		return
-	}
-	defer stmt.Close()
-
-	result, err := stmt.Exec(
-		file.UserID,
-		file.ContactID,
-		file.CompanyID,
-		file.FileName,
-		file.StoragePath,
-		file.FileType,
-		file.FileSize,
-	)
-	if err != nil {
-		log.Printf("Error inserting file: %v", err)
-		utils.RespondError(w, http.StatusInternalServerError, "Failed to create file record")
-		return
-	}
-
-	id, _ := result.LastInsertId()
-	file.ID = int(id)
-	file.UploadedAt = time.Now().Format(time.RFC3339)
-
-	utils.RespondJSON(w, http.StatusCreated, file)
-}
+//// CreateFile handles the creation of a new file record (metadata only).
+//func (c *CRMHandlers) CreateFile(w http.ResponseWriter, r *http.Request) {
+//	userID, ok := r.Context().Value(models.UserIDContextKey).(int)
+//	if !ok {
+//		utils.RespondError(w, http.StatusUnauthorized, "User not authenticated")
+//		return
+//	}
+//
+//	var file models.File
+//	if err := json.NewDecoder(r.Body).Decode(&file); err != nil {
+//		utils.RespondError(w, http.StatusBadRequest, "Invalid request payload")
+//		return
+//	}
+//	file.UserID = userID // Assign the authenticated user's ID
+//
+//	db := c.DB
+//
+//	// Validate contact_id or company_id belongs to the user if provided
+//	if file.ContactID != nil && *file.ContactID != 0 {
+//		if err := utils.ValidateOwnership(c.DB, "contacts", *file.ContactID, userID); err != nil {
+//			utils.RespondError(w, http.StatusForbidden, err.Error())
+//			return
+//		}
+//	}
+//	if file.CompanyID != nil && *file.CompanyID != 0 {
+//		if err := utils.ValidateOwnership(c.DB, "contacts", *file.CompanyID, userID); err != nil {
+//			utils.RespondError(w, http.StatusForbidden, err.Error())
+//			return
+//		}
+//	}
+//
+//	stmt, err := db.Prepare(`INSERT INTO files (user_id, contact_id, company_id, file_name, storage_path, file_type, file_size) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+//	if err != nil {
+//		log.Printf("Error preparing statement: %v", err)
+//		utils.RespondError(w, http.StatusInternalServerError, "Database error")
+//		return
+//	}
+//	defer stmt.Close()
+//
+//	result, err := stmt.Exec(
+//		file.UserID,
+//		file.ContactID,
+//		file.CompanyID,
+//		file.FileName,
+//		file.StoragePath,
+//		file.FileType,
+//		file.FileSize,
+//	)
+//	if err != nil {
+//		log.Printf("Error inserting file: %v", err)
+//		utils.RespondError(w, http.StatusInternalServerError, "Failed to create file record")
+//		return
+//	}
+//
+//	id, _ := result.LastInsertId()
+//	file.ID = int(id)
+//	file.UploadedAt = time.Now().Format(time.RFC3339)
+//
+//	utils.RespondJSON(w, http.StatusCreated, file)
+//}
+//
 
 // GetFile retrieves a single file record by ID.
 func (c *CRMHandlers) GetFile(w http.ResponseWriter, r *http.Request) {
@@ -291,11 +305,8 @@ func (c *CRMHandlers) GetFile(w http.ResponseWriter, r *http.Request) {
 
 	db := c.DB
 	var file models.File
-	err = db.QueryRow(`SELECT id, user_id, contact_id, company_id, file_name, storage_path, file_type, file_size, uploaded_at FROM files WHERE id = ? AND user_id = ?`,
-		fileID, userID).Scan(
-		&file.ID, &file.UserID, &file.ContactID, &file.CompanyID, &file.FileName,
-		&file.StoragePath, &file.FileType, &file.FileSize, &file.UploadedAt,
-	)
+	err = db.QueryRow(`SELECT id, user_id, contact_id, company_id, file_name, storage_path, file_type, file_size, uploaded_at, interaction_id FROM files WHERE id = ? AND user_id = ?`, fileID, userID).
+		Scan(&file.ID, &file.UserID, &file.ContactID, &file.CompanyID, &file.FileName, &file.StoragePath, &file.FileType, &file.FileSize, &file.UploadedAt, &file.InteractionID)
 	if errors.Is(err, sql.ErrNoRows) {
 		utils.RespondError(w, http.StatusNotFound, "File not found or unauthorized")
 		return
@@ -318,10 +329,10 @@ func (c *CRMHandlers) ListFiles(w http.ResponseWriter, r *http.Request) {
 	}
 
 	db := c.DB
-	query := `SELECT id, user_id, contact_id, company_id, file_name, storage_path, file_type, file_size, uploaded_at FROM files WHERE user_id = ?`
+	query := `SELECT id, user_id, contact_id, company_id, file_name, storage_path, file_type, file_size, uploaded_at,interaction_id FROM files WHERE user_id = ?`
 	args := []interface{}{userID}
 
-	// Optional filtering by contact_id
+	// Filtering by contact_id
 	contactIDStr := r.URL.Query().Get("contact_id")
 	if contactIDStr != "" {
 		contactID, err := strconv.Atoi(contactIDStr)
@@ -332,8 +343,19 @@ func (c *CRMHandlers) ListFiles(w http.ResponseWriter, r *http.Request) {
 		query += ` AND contact_id = ?`
 		args = append(args, contactID)
 	}
+	// Filtering by interaction_id
+	interactionIDStr := r.URL.Query().Get("interaction_id")
+	if interactionIDStr != "" {
+		interactionID, err := strconv.Atoi(interactionIDStr)
+		if err != nil {
+			utils.RespondError(w, http.StatusBadRequest, "Invalid interaction_id parameter")
+			return
+		}
+		query += " AND interaction_id = ?"
+		args = append(args, interactionID)
+	}
 
-	// Optional filtering by company_id
+	// Filtering by company_id
 	companyIDStr := r.URL.Query().Get("company_id")
 	if companyIDStr != "" {
 		companyID, err := strconv.Atoi(companyIDStr)
@@ -358,7 +380,7 @@ func (c *CRMHandlers) ListFiles(w http.ResponseWriter, r *http.Request) {
 		var file models.File
 		if err := rows.Scan(
 			&file.ID, &file.UserID, &file.ContactID, &file.CompanyID, &file.FileName,
-			&file.StoragePath, &file.FileType, &file.FileSize, &file.UploadedAt,
+			&file.StoragePath, &file.FileType, &file.FileSize, &file.UploadedAt, &file.InteractionID,
 		); err != nil {
 			log.Printf("Error scanning file row: %v", err)
 			continue
@@ -391,9 +413,10 @@ func (c *CRMHandlers) UpdateFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var payload struct {
-		FileName  string `json:"file_name"`
-		ContactID *int   `json:"contact_id,omitempty"`
-		CompanyID *int   `json:"company_id,omitempty"`
+		FileName      string `json:"file_name"`
+		ContactID     *int   `json:"contact_id,omitempty"`
+		CompanyID     *int   `json:"company_id,omitempty"`
+		InteractionID *int   `json:"interaction_id,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		utils.RespondError(w, http.StatusBadRequest, "Invalid request payload")
@@ -423,10 +446,16 @@ func (c *CRMHandlers) UpdateFile(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if payload.InteractionID != nil && *payload.InteractionID != 0 {
+		if err = utils.ValidateOwnership(c.DB, "interactions", *payload.InteractionID, userID); err != nil {
+			utils.RespondError(w, http.StatusBadRequest, "Invalid interaction ID")
+			return
+		}
+	}
 
 	stmt, err := c.DB.Prepare(`
 		UPDATE files
-		SET contact_id = ?, company_id = ?, file_name = ?
+		SET contact_id = ?, company_id = ?, file_name = ?, interaction_id = ?
 		WHERE id = ? AND user_id = ?
 	`)
 	if err != nil {
@@ -440,6 +469,7 @@ func (c *CRMHandlers) UpdateFile(w http.ResponseWriter, r *http.Request) {
 		payload.ContactID,
 		payload.CompanyID,
 		payload.FileName,
+		payload.InteractionID,
 		fileID,
 		userID,
 	)

@@ -110,6 +110,7 @@ CREATE TABLE IF NOT EXISTS files (
     user_id INTEGER NOT NULL,
     contact_id INTEGER,
     company_id INTEGER,
+	interaction_id INTEGER,
     file_name TEXT NOT NULL,
     storage_path TEXT NOT NULL UNIQUE, -- Path on the server's filesystem
     file_type TEXT, -- MIME type

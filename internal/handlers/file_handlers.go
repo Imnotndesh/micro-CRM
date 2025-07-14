@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -14,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -67,13 +69,15 @@ func (c *CRMHandlers) UploadFileHandler(w http.ResponseWriter, r *http.Request) 
 		"image/svg+xml":      true,
 		"application/pdf":    true,
 		"text/plain":         true,
+		"text/xml":           true,
+		"application/xml":    true,
 		"application/msword": true, // .doc
 		"application/vnd.openxmlformats-officedocument.wordprocessingml.document": true, // .docx
 		"application/vnd.ms-excel": true, // .xls
 		"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": true, // .xlsx
 	}
 
-	// Read the first 512 bytes for MIME sniffing
+	/// 4. Determine MIME type
 	buffer := make([]byte, 512)
 	_, err = file.Read(buffer)
 	if err != nil && err != io.EOF {
@@ -81,27 +85,50 @@ func (c *CRMHandlers) UploadFileHandler(w http.ResponseWriter, r *http.Request) 
 		utils.RespondError(w, http.StatusBadRequest, "Failed to read file content")
 		return
 	}
-
-	// Reset file reader since we read from it
-	// Use Seek to rewind
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		c.Log.Warn("UploadFile: Failed to rewind file after reading header: %v", err)
 		utils.RespondError(w, http.StatusInternalServerError, "Failed to process file")
 		return
 	}
 
-	fileType := http.DetectContentType(buffer)
+	// Sniff MIME type from content
+	sniffedType := http.DetectContentType(buffer)
+	fileType := sniffedType
+	if idx := strings.Index(fileType, ";"); idx != -1 {
+		fileType = strings.TrimSpace(fileType[:idx])
+	}
+
+	// Fallback to file extension if needed
+	ext := strings.ToLower(filepath.Ext(handler.Filename))
+	if sniffedType == "application/octet-stream" || sniffedType == "text/plain" {
+		switch ext {
+		case ".svg":
+			fileType = "image/svg+xml"
+		case ".docx":
+			fileType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+		case ".xlsx":
+			fileType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+		case ".xls":
+			fileType = "application/vnd.ms-excel"
+		case ".doc":
+			fileType = "application/msword"
+		case ".pdf":
+			fileType = "application/pdf"
+		}
+	}
+
 	if !allowedMIMETypes[fileType] {
 		c.Log.Warn("UploadFile: Disallowed file type uploaded: %s", fileType)
-		utils.RespondError(w, http.StatusBadRequest, "Unsupported file type. Allowed: JPEG, PNG, PDF, TXT, Word, Excel, SVG.")
+		utils.RespondError(w, http.StatusBadRequest, "Unsupported file type.")
 		return
 	}
+
 	// 5. Create a unique filename on the server to prevent conflicts and ensure safety
 	rawFilename := handler.Filename
 	cleanFilename := filepath.Base(rawFilename)   // removes any path traversal
 	base := utils.SanitizeFilename(cleanFilename) // we'll create this function next
 
-	ext := filepath.Ext(base)
+	ext = filepath.Ext(base)
 	name := base[:len(base)-len(ext)]
 	uniqueFilename := fmt.Sprintf("%s-%d%s", name, time.Now().UnixNano(), ext)
 	// Add nanosecond timestamp for uniqueness
@@ -447,8 +474,10 @@ func (c *CRMHandlers) UpdateFile(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if payload.InteractionID != nil && *payload.InteractionID != 0 {
-		if err = utils.ValidateOwnership(c.DB, "interactions", *payload.InteractionID, userID); err != nil {
-			utils.RespondError(w, http.StatusBadRequest, "Invalid interaction ID")
+		var exists bool
+		err = c.DB.QueryRow("SELECT EXISTS(SELECT 1 FROM interactions WHERE id = ? AND user_id = ?)", *payload.InteractionID, userID).Scan(&exists)
+		if err != nil || !exists {
+			utils.RespondError(w, http.StatusForbidden, "Associated interaction not found or does not belong to the user")
 			return
 		}
 	}
@@ -535,4 +564,201 @@ func (c *CRMHandlers) DeleteFile(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}()
+}
+
+var downloadSemaphore = make(chan struct{}, 100) // Max 100 concurrent downloads
+
+func (c *CRMHandlers) DownloadFileHandler(w http.ResponseWriter, r *http.Request) {
+	// Add timeout context
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
+	defer cancel()
+
+	// Rate limiting with context cancellation
+	select {
+	case downloadSemaphore <- struct{}{}:
+		defer func() { <-downloadSemaphore }()
+	case <-ctx.Done():
+		http.Error(w, "Request cancelled", http.StatusRequestTimeout)
+		return
+	}
+
+	vars := mux.Vars(r)
+	id := vars["id"]
+
+	if id == "" {
+		http.Error(w, "Invalid file ID", http.StatusBadRequest)
+		return
+	}
+
+	// Context-aware database query
+	var fileName, storagePath, fileType string
+	var fileSize int64
+
+	query := `SELECT file_name, storage_path, file_type, file_size FROM files WHERE id = ?`
+	row := c.DB.QueryRowContext(ctx, query, id)
+
+	err := row.Scan(&fileName, &storagePath, &fileType, &fileSize)
+	if err != nil {
+		if err == context.Canceled || err == context.DeadlineExceeded {
+			return
+		}
+		if err == sql.ErrNoRows {
+			http.Error(w, "File not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "Database error", http.StatusInternalServerError)
+		return
+	}
+
+	// Check if client disconnected before file operations
+	select {
+	case <-ctx.Done():
+		return
+	default:
+	}
+
+	// Sanitize filename for header safety
+	sanitizedName := strings.ReplaceAll(fileName, "\"", "")
+	sanitizedName = strings.ReplaceAll(sanitizedName, "\n", "")
+	sanitizedName = strings.ReplaceAll(sanitizedName, "\r", "")
+
+	// Validate and set content type
+	contentType := fileType
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+
+	// Basic content type validation for security
+	safeTypes := map[string]bool{
+		"application/pdf": true, "application/zip": true, "application/octet-stream": true,
+		"image/jpeg": true, "image/png": true, "image/gif": true, "text/plain": true,
+		"application/msword": true, "application/vnd.openxmlformats-officedocument.wordprocessingml.document": true,
+	}
+
+	if !safeTypes[contentType] {
+		contentType = "application/octet-stream"
+	}
+
+	// Set download headers
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", sanitizedName))
+	w.Header().Set("Content-Type", contentType)
+	if fileSize > 0 {
+		w.Header().Set("Content-Length", strconv.FormatInt(fileSize, 10))
+	}
+
+	// Use http.ServeFile - highly optimized for concurrent access
+	// Handles range requests, ETags, caching, and proper connection management
+	http.ServeFile(w, r.WithContext(ctx), storagePath)
+}
+
+// Refactor everything below this line
+func isViewableFileType(fileType string) bool {
+	viewableTypes := map[string]bool{
+		// PDF files
+		"application/pdf": true,
+
+		// Image files
+		"image/jpeg":    true,
+		"image/jpg":     true,
+		"image/png":     true,
+		"image/gif":     true,
+		"image/webp":    true,
+		"image/svg+xml": true,
+		"image/bmp":     true,
+		"image/tiff":    true,
+
+		// Video files
+		"video/mp4":       true,
+		"video/mpeg":      true,
+		"video/quicktime": true,
+		"video/x-msvideo": true, // .avi
+		"video/webm":      true,
+		"video/ogg":       true,
+		"video/3gpp":      true,
+		"video/x-ms-wmv":  true,
+		"video/x-flv":     true,
+	}
+
+	return viewableTypes[fileType]
+}
+
+var viewerSemaphore = make(chan struct{}, 100)
+
+func (c *CRMHandlers) ViewFileHandler(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
+	defer cancel()
+
+	select {
+	case viewerSemaphore <- struct{}{}:
+		defer func() { <-viewerSemaphore }()
+	case <-ctx.Done():
+		http.Error(w, "Request cancelled", http.StatusRequestTimeout)
+		return
+	}
+
+	vars := mux.Vars(r)
+	id := vars["id"]
+	if id == "" {
+		http.Error(w, "Invalid file ID", http.StatusBadRequest)
+		return
+	}
+
+	var fileName, storagePath, fileType string
+	var fileSize int64
+	query := `SELECT file_name, storage_path, file_type, file_size FROM files WHERE id = ?`
+	row := c.DB.QueryRowContext(ctx, query, id)
+
+	err := row.Scan(&fileName, &storagePath, &fileType, &fileSize)
+	if err != nil {
+		if err == context.Canceled || err == context.DeadlineExceeded {
+			return
+		}
+		if err == sql.ErrNoRows {
+			http.Error(w, "File not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "Database error", http.StatusInternalServerError)
+		return
+	}
+
+	select {
+	case <-ctx.Done():
+		return
+	default:
+	}
+
+	// Determine content type with extension fallback
+	contentType := fileType
+	if !isViewableFileType(contentType) {
+		ext := strings.ToLower(filepath.Ext(fileName))
+		extensionToType := map[string]string{
+			".pdf": "application/pdf", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+			".png": "image/png", ".gif": "image/gif", ".webp": "image/webp",
+			".svg": "image/svg+xml", ".bmp": "image/bmp", ".tiff": "image/tiff",
+			".tif": "image/tiff", ".mp4": "video/mp4", ".mpeg": "video/mpeg",
+			".mpg": "video/mpeg", ".mov": "video/quicktime", ".avi": "video/x-msvideo",
+			".webm": "video/webm", ".ogv": "video/ogg", ".3gp": "video/3gpp",
+			".wmv": "video/x-ms-wmv", ".flv": "video/x-flv",
+		}
+		if ct, exists := extensionToType[ext]; exists {
+			contentType = ct
+		} else {
+			http.Error(w, "File type not supported for viewing", http.StatusUnsupportedMediaType)
+			return
+		}
+	}
+
+	sanitizedName := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(fileName, "\"", ""), "\n", ""), "\r", "")
+
+	w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=\"%s\"", sanitizedName))
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Cache-Control", "public, max-age=3600")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+
+	if fileSize > 0 {
+		w.Header().Set("Content-Length", strconv.FormatInt(fileSize, 10))
+	}
+	http.ServeFile(w, r.WithContext(ctx), storagePath)
 }

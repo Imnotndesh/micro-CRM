@@ -97,6 +97,8 @@ func (a *Api) SetupFileRoutes() {
 	a.authRouter.HandleFunc("/files/{id}", a.CRMHandlers.GetFile).Methods("GET")
 	a.authRouter.HandleFunc("/files/{id}", a.CRMHandlers.UpdateFile).Methods("PUT")
 	a.authRouter.HandleFunc("/files/{id}", a.CRMHandlers.DeleteFile).Methods("DELETE")
+	a.authRouter.HandleFunc("/files/{id}/download", a.CRMHandlers.DownloadFileHandler).Methods("GET")
+	a.authRouter.HandleFunc("/files/{id}/view", a.CRMHandlers.ViewFileHandler).Methods("GET")
 
 	// TODO: restructure with new admin router in mind
 	a.adminRouter.HandleFunc("/files/cleanup", a.CRMHandlers.CleanupOrphanedFiles).Methods("DELETE")

@@ -18,7 +18,7 @@ func (c *CRMHandlers) GetUserInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var response models.User
-	err := c.DB.QueryRow("SELECT username,email,first_name,last_name,created_at,updated_at FROM users WHERE id = ?", userID).Scan(&response.Username, &response.Email, &response.FirstName, &response.LastName, &response.CreatedAt, &response.UpdatedAt)
+	err := c.DB.QueryRow("SELECT username,email,first_name,last_name,created_at,updated_at,role,phone_number,status FROM users WHERE id = ?", userID).Scan(&response.Username, &response.Email, &response.FirstName, &response.LastName, &response.CreatedAt, &response.UpdatedAt, &response.Role, &response.PhoneNumber, &response.Status)
 	if errors.Is(err, sql.ErrNoRows) {
 		utils.RespondError(w, http.StatusNotFound, "User not found")
 		return
@@ -39,45 +39,77 @@ func (c *CRMHandlers) UpdateUserInfo(w http.ResponseWriter, r *http.Request) {
 		utils.RespondError(w, http.StatusUnauthorized, "User not authenticated")
 		return
 	}
+
 	var (
 		updateRequest  models.EditUserPayload
 		updateResponse models.UpdateUserResponse
 	)
+
+	// Decode JSON payload
 	err := json.NewDecoder(r.Body).Decode(&updateRequest)
 	if err != nil {
-		utils.RespondError(w, http.StatusBadRequest, err.Error())
+		utils.RespondError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
+	c.Log.Debug("Update request: ", updateRequest)
 
-	stmt, err := c.DB.Prepare("UPDATE users SET username = ?,email = ?,first_name = ?,last_name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+	// Determine whether to include password update
+	query := `UPDATE users SET email = ?, first_name = ?, last_name = ?, phone_number = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+	args := []interface{}{
+		updateRequest.Email,
+		updateRequest.FirstName,
+		updateRequest.LastName,
+		updateRequest.PhoneNumber,
+		userID,
+	}
+
+	if updateRequest.NewPassword != "" {
+		// If a new password was provided, hash and add it to the update
+		hashedPassword, err := utils.GeneratePassword(updateRequest.NewPassword)
+		if err != nil {
+			c.Log.Error("Password hashing failed: ", err)
+			utils.RespondError(w, http.StatusInternalServerError, "Could not update password")
+			return
+		}
+
+		query = `UPDATE users SET email = ?, first_name = ?, last_name = ?, password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+		// Insert password before userID
+		args = []interface{}{
+			updateRequest.Email,
+			updateRequest.FirstName,
+			updateRequest.LastName,
+			hashedPassword,
+			userID,
+		}
+	}
+
+	stmt, err := c.DB.Prepare(query)
 	if err != nil {
-		c.Log.Fatal("Error preparing statement", err.Error())
+		c.Log.Error("Failed to prepare update statement: ", err)
 		utils.RespondError(w, http.StatusInternalServerError, "Database error")
 		return
 	}
 	defer stmt.Close()
-	res, err := stmt.Exec(
-		updateRequest.Username,
-		updateRequest.Email,
-		updateRequest.FirstName,
-		updateRequest.LastName,
-		userID,
-	)
+
+	res, err := stmt.Exec(args...)
 	if err != nil {
-		c.Log.Fatal("Error updating user: ", err.Error())
+		c.Log.Error("Error executing update: ", err)
 		utils.RespondError(w, http.StatusInternalServerError, "Database error")
 		return
 	}
+
 	rowsAffected, _ := res.RowsAffected()
 	if rowsAffected == 0 {
 		utils.RespondError(w, http.StatusNotFound, "User not found")
 		return
 	}
+
 	updateResponse = models.UpdateUserResponse{
 		Message:   "User updated",
 		UpdatedAt: time.Now().Format(time.RFC3339),
 	}
 	utils.RespondJSON(w, http.StatusOK, updateResponse)
+	return
 }
 func (c *CRMHandlers) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	UserID, ok := r.Context().Value(models.UserIDContextKey).(int)
@@ -88,7 +120,7 @@ func (c *CRMHandlers) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	var (
 		deleteResponse models.UserDeleteResponse
 	)
-	res, err := c.DB.Exec("DELETE FROM users WHERE id=?", UserID)
+	res, err := c.DB.Exec("UPDATE users SET status='incative' WHERE id=?", UserID)
 	if err != nil {
 		c.Log.Error("Error deleting user : ", err.Error())
 		utils.RespondError(w, http.StatusInternalServerError, err.Error())
@@ -100,6 +132,40 @@ func (c *CRMHandlers) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		utils.RespondError(w, http.StatusNotFound, "User Not found or unauthorized to delete")
 		return
 	}
-	deleteResponse.Message = "Success deleting user"
+	deleteResponse.Message = "Success disabling user"
 	utils.RespondJSON(w, http.StatusOK, deleteResponse)
+}
+
+func (c *CRMHandlers) GetProfileStats(w http.ResponseWriter, r *http.Request) {
+	userID, ok := r.Context().Value(models.UserIDContextKey).(int)
+	if !ok {
+		utils.RespondError(w, http.StatusUnauthorized, "User not authenticated")
+		return
+	}
+	var (
+		response models.UserStatsResponse
+	)
+	query := `
+	SELECT
+	  (SELECT created_at FROM users WHERE id = $1) AS member_since,
+	  (SELECT COUNT(*) FROM contacts WHERE user_id = $1) AS total_contacts,
+	  (SELECT COUNT(*) FROM companies WHERE user_id = $1) AS companies_managed,
+	  (SELECT COUNT(*) FROM interactions WHERE user_id = $1) AS total_interactions,
+	  (SELECT COUNT(*) FROM tasks WHERE user_id = $1) AS total_tasks;
+	`
+
+	err := c.DB.QueryRow(query, userID).Scan(
+		&response.MemberSince,
+		&response.TotalContacts,
+		&response.CompaniesManaged,
+		&response.TotalInteractions,
+		&response.TotalTasks,
+	)
+	if err != nil {
+		c.Log.Fatal("Error querying user", err.Error())
+		utils.RespondError(w, http.StatusInternalServerError, "Database error")
+		return
+	}
+	utils.RespondJSON(w, http.StatusOK, response)
+	return
 }

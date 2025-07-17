@@ -8,13 +8,15 @@ import (
 	"log"
 	"micro-CRM/internal/logger"
 	"micro-CRM/internal/models"
+	"micro-CRM/internal/tokenstore"
 	"micro-CRM/internal/utils"
 	"net/http"
 )
 
 type CRMHandlers struct {
-	DB  *sql.DB
-	Log logger.Logger
+	DB         *sql.DB
+	Log        logger.Logger
+	TokenStore *tokenstore.BuntDBTokenStore
 }
 
 // RegisterUser handles user registration.
@@ -24,11 +26,10 @@ func (c *CRMHandlers) RegisterUser(w http.ResponseWriter, r *http.Request) {
 		utils.RespondError(w, http.StatusBadRequest, "Invalid request payload")
 		return
 	}
-	c.Log.Info("Registering user call from : ", r.RemoteAddr)
 	// Hash the password
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(payload.Password), bcrypt.DefaultCost)
+	hashedPassword, err := utils.GeneratePassword(payload.Password)
 	if err != nil {
-		log.Printf("Error hashing password: %v", err)
+		c.Log.Warn("Error hashing password: %v", err)
 		utils.RespondError(w, http.StatusInternalServerError, "Failed to process password")
 		return
 	}
@@ -36,7 +37,7 @@ func (c *CRMHandlers) RegisterUser(w http.ResponseWriter, r *http.Request) {
 	db := c.DB
 	stmt, err := db.Prepare("INSERT INTO users (username, email, password_hash, first_name, last_name) VALUES (?, ?, ?, ?, ?)")
 	if err != nil {
-		log.Printf("Error preparing statement: %v", err)
+		c.Log.Warn("Error preparing statement: %v", err)
 		utils.RespondError(w, http.StatusInternalServerError, "Database error")
 		return
 	}
@@ -61,11 +62,22 @@ func (c *CRMHandlers) RegisterUser(w http.ResponseWriter, r *http.Request) {
 		utils.RespondError(w, http.StatusInternalServerError, "Failed to generate authentication token")
 		return
 	}
-
+	var responseUser models.User
+	err = db.QueryRow("SELECT id,first_name,last_name,username,email,role,phone_number,created_at,status FROM users WHERE id = ?", userID).Scan(&responseUser.ID, &responseUser.FirstName, &responseUser.LastName, &responseUser.Username, &responseUser.Email, &responseUser.Role, &responseUser.PhoneNumber, &responseUser.CreatedAt, &responseUser.Status)
+	if err != nil {
+		c.Log.Warn("Error querying user: %v", err)
+		utils.RespondError(w, http.StatusInternalServerError, "Database error")
+		return
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		c.Log.Info("User not found")
+		utils.RespondError(w, http.StatusNotFound, "User not found")
+		return
+	}
 	utils.RespondJSON(w, http.StatusCreated, map[string]interface{}{
 		"message": "User registered successfully",
 		"token":   token,
-		"user_id": userID,
+		"user":    responseUser,
 	})
 }
 
@@ -79,9 +91,7 @@ func (c *CRMHandlers) LoginUser(w http.ResponseWriter, r *http.Request) {
 	db := c.DB
 	c.Log.Info("User login request")
 	var user models.User
-	err := db.QueryRow("SELECT id, username, password_hash, email, first_name, last_name, created_at, updated_at FROM users WHERE username = ?", payload.Username).Scan(
-		&user.ID, &user.Username, &user.PasswordHash, &user.Email, &user.FirstName, &user.LastName, &user.CreatedAt, &user.UpdatedAt)
-
+	err := db.QueryRow("SELECT id,first_name,last_name,username,email,role,phone_number,created_at,password_hash FROM users WHERE username = ?", payload.Username).Scan(&user.ID, &user.FirstName, &user.LastName, &user.Username, &user.Email, &user.Role, &user.PhoneNumber, &user.CreatedAt, &user.PasswordHash)
 	if errors.Is(err, sql.ErrNoRows) {
 		utils.RespondError(w, http.StatusUnauthorized, "Invalid username or password")
 		return
@@ -91,6 +101,14 @@ func (c *CRMHandlers) LoginUser(w http.ResponseWriter, r *http.Request) {
 		utils.RespondError(w, http.StatusInternalServerError, "Database error")
 		return
 	}
+	if user.Status == "inactive" {
+		c.Log.Info("User is inactive")
+		utils.RespondJSON(w, http.StatusUnauthorized, map[string]interface{}{
+			"message": "User is inactive, Contact administrator to configure your user",
+		})
+		return
+	}
+	c.Log.Info("User is active")
 
 	// Compare password hash
 	err = bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(payload.Password))
@@ -109,6 +127,6 @@ func (c *CRMHandlers) LoginUser(w http.ResponseWriter, r *http.Request) {
 	utils.RespondJSON(w, http.StatusOK, map[string]interface{}{
 		"message": "Login successful",
 		"token":   token,
-		"user_id": user.ID,
+		"user":    user,
 	})
 }

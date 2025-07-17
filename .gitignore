@@ -1,5 +1,7 @@
 /uploads
-/certs/cert.pem
-/certs/key.pem
-/database
-/database/micro-crm.db
+/data/certs/cert.pem
+/data/certs/key.pem
+/data/database
+/data/database/micro-crm.db
+/data/
+.env

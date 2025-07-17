@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"golang.org/x/crypto/bcrypt"
+	"strings"
 )
 
 // ValidateOwnership checks if a record with the given id exists in a known table and belongs to userID.
@@ -26,4 +28,20 @@ func ValidateOwnership(db *sql.DB, table string, id int, userID int) error {
 		return fmt.Errorf("%s not found or does not belong to the user", table)
 	}
 	return nil
+}
+func GeneratePassword(plain string) (string, error) {
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(plain), bcrypt.DefaultCost)
+	if err != nil {
+		return "", err
+	}
+	return string(hashedPassword), err
+}
+func SplitName(full string) (string, string) {
+	parts := strings.Fields(full)
+	if len(parts) == 0 {
+		return "", ""
+	}
+	first := parts[0]
+	last := strings.Join(parts[1:], " ")
+	return first, last
 }

@@ -9,9 +9,12 @@ type User struct {
 	ID           int    `json:"id"`
 	Username     string `json:"username"`
 	Email        string `json:"email"`
+	Status       string `json:"status"`
 	PasswordHash string `json:"-,omitempty"`
 	FirstName    string `json:"first_name,omitempty"`
 	LastName     string `json:"last_name,omitempty"`
+	Role         string `json:"role,omitempty"`
+	PhoneNumber  string `json:"phone_number,omitempty"`
 	CreatedAt    string `json:"created_at,omitempty"`
 	UpdatedAt    string `json:"updated_at,omitempty"`
 }
@@ -34,10 +37,10 @@ type GetUserResponse struct {
 
 // EditUserPayload expected payload for edit profile handler
 type EditUserPayload struct {
-	Username    string `json:"username"`
 	Email       string `json:"email"`
 	FirstName   string `json:"first_name,omitempty"`
 	LastName    string `json:"last_name,omitempty"`
+	PhoneNumber string `json:"phone_number,omitempty"`
 	NewPassword string `json:"new_password,omitempty"`
 }
 
@@ -65,6 +68,13 @@ type UserLoginPayload struct {
 // UserDeleteResponse profile delete response
 type UserDeleteResponse struct {
 	Message string `json:"message"`
+}
+type UserStatsResponse struct {
+	MemberSince       string `json:"member_since"`
+	TotalContacts     int    `json:"total_contacts"`
+	CompaniesManaged  int    `json:"companies_managed"`
+	TotalInteractions int    `json:"total_interactions"`
+	TotalTasks        int    `json:"total_tasks"`
 }
 
 // Company represents a company record.
@@ -171,6 +181,8 @@ type EnvParams struct {
 	ApiPort      string
 	KeyFilePath  string
 	CertFilePath string
+	DataPath     string
+	WebUiUrl     string
 }
 type Handlers struct {
 	Db *sql.DB
@@ -205,10 +217,25 @@ type InteractionTrend struct {
 	Emails   int    `json:"emails"`
 	Meetings int    `json:"meetings"`
 }
+type OidcConfig struct {
+	IssuerUrl    string
+	ClientID     string
+	ClientSecret string
+	RedirectUri  string
+	LogoutUrl    string
+}
 
 const (
-	DefaultDBPath   = "/app/database/micro-crm.db"
-	DefaultKeyPath  = "./certs/micro-crm-key.pem"
-	DefaultCertPath = "./certs/micro-crm-cert.pem"
+	DefaultDBPath   = "./data/database/micro-crm.db"
+	DefaultKeyPath  = "./data/certs/micro-crm-key.pem"
+	DefaultCertPath = "./data/certs/micro-crm-cert.pem"
 	DefaultApiPort  = "9080"
+	StartupText     = `
+
+	███╗   ███╗██╗ ██████╗██████╗  ██████╗        ██████╗██████╗ ███╗   ███╗
+	████╗ ████║██║██╔════╝██╔══██╗██╔═══██╗      ██╔════╝██╔══██╗████╗ ████║
+	██╔████╔██║██║██║     ██████╔╝██║   ██║█████╗██║     ██████╔╝██╔████╔██║
+	██║╚██╔╝██║██║██║     ██╔══██╗██║   ██║╚════╝██║     ██╔══██╗██║╚██╔╝██║
+	██║ ╚═╝ ██║██║╚██████╗██║  ██║╚██████╔╝      ╚██████╗██║  ██║██║ ╚═╝ ██║
+	╚═╝     ╚═╝╚═╝ ╚═════╝╚═╝  ╚═╝ ╚═════╝        ╚═════╝╚═╝  ╚═╝╚═╝     ╚═╝`
 )

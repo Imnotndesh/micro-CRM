@@ -6,6 +6,7 @@ import (
 	"micro-CRM/internal/api"
 	"micro-CRM/internal/models"
 	"os"
+	"os/exec"
 )
 
 var (
@@ -13,19 +14,25 @@ var (
 )
 
 func main() {
-	if err := godotenv.Load(); err != nil {
-		log.Println("Error loading .env file")
-	}
-	customVars.DbPath = os.Getenv("DB_PATH")
+	_ = godotenv.Load()
 	customVars.JWTToken = os.Getenv("JWT_TOKEN")
 	customVars.ApiPort = os.Getenv("API_PORT")
+	customVars.WebUiUrl = os.Getenv("WEB_UI_URL")
+	customVars.DataPath = os.Getenv("DATA_STORAGE_PATH")
+	customVars.DbPath = customVars.DataPath + "/database/micro-crm.db"
 	customVars.CertFilePath = os.Getenv("CERT_FILE_PATH")
 	customVars.KeyFilePath = os.Getenv("KEY_FILE_PATH")
+
+	_, err := os.Stat(customVars.DataPath)
+	if os.IsNotExist(err) {
+		log.Println("Data storage path env variable missing, trying defaults")
+		customVars.DbPath = "./data"
+	}
 	if customVars.ApiPort == "" {
 		customVars.ApiPort = models.DefaultApiPort
 	}
 	if customVars.DbPath == "" {
-		customVars.DbPath = models.DefaultDBPath
+		customVars.DbPath = customVars.DataPath + "/database/micro-crm.db"
 	}
 	if customVars.JWTToken == "" {
 		log.Fatalln("JWT_TOKEN environment variable must be set")
@@ -37,7 +44,19 @@ func main() {
 			log.Fatalln("Key and cert files do not exist")
 		}
 	} else {
-		log.Fatalln("Cert file and key file path env variable must be passed")
+		log.Println("Cert file and key file path env variable missing, trying defaults")
+		_, certErr := os.Stat(customVars.DataPath + "/certs/cert.pem")
+		_, keyErr := os.Stat(customVars.DataPath + "/certs/key.pem")
+		if os.IsNotExist(certErr) && os.IsNotExist(keyErr) {
+			log.Println("Key and cert files do not exist: auto-generating new ones")
+			cdm := exec.Command("bash", "./autogen-key.sh")
+			err := cdm.Run()
+			if err != nil {
+				log.Fatalln("Auto cert generation failed", err)
+			}
+		}
+		customVars.KeyFilePath = customVars.DataPath + "/certs/key.pem"
+		customVars.CertFilePath = customVars.DataPath + "/certs/cert.pem"
 	}
 	serverApi := api.NewApi(customVars)
 	serverApi.Start()

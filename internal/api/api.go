@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"github.com/gorilla/mux"
 	"github.com/rs/cors"
 	"log"
@@ -12,6 +13,8 @@ import (
 	"micro-CRM/internal/logger"
 	"micro-CRM/internal/middleware"
 	"micro-CRM/internal/models"
+	"micro-CRM/internal/oidc"
+	_ "micro-CRM/internal/oidc"
 	"micro-CRM/internal/utils"
 	"net/http"
 	"os"
@@ -75,6 +78,12 @@ func (a *Api) SetupAllRoutes() {
 func (a *Api) SetupAuthenticationRoutes() {
 	a.router.HandleFunc("/register", a.CRMHandlers.RegisterUser).Methods("POST")
 	a.router.HandleFunc("/login", a.CRMHandlers.LoginUser).Methods("POST")
+	a.router.HandleFunc("/login/oidc", a.CRMHandlers.OIDCLoginHandler).Methods("GET")
+	a.router.HandleFunc("/login/oidc/callback", a.CRMHandlers.OIDCCallbackHandler).Methods("GET")
+	// a.authRouter.HandleFunc("/logout/oidc", a.CRMHandlers.OIDCLogoutHandler).Methods("GET")
+}
+func (a *Api) SetupOIDC() error {
+	return oidc.InitOIDC(context.Background())
 }
 func (a *Api) SetupCompanyRoutes() {
 	a.authRouter.HandleFunc("/companies", a.CRMHandlers.CreateCompany).Methods("POST")
@@ -105,8 +114,9 @@ func (a *Api) SetupFileRoutes() {
 }
 func (a *Api) SetupProfileRoutes() {
 	a.authRouter.HandleFunc("/profile", a.CRMHandlers.GetUserInfo).Methods("GET")
-	a.authRouter.HandleFunc("/profile/update", a.CRMHandlers.UpdateUserInfo).Methods("PUT")
-	a.authRouter.HandleFunc("/profile/delete", a.CRMHandlers.DeleteUser).Methods("DELETE")
+	a.authRouter.HandleFunc("/profile", a.CRMHandlers.UpdateUserInfo).Methods("PUT")
+	a.authRouter.HandleFunc("/profile", a.CRMHandlers.DeleteUser).Methods("DELETE")
+	a.authRouter.HandleFunc("/profile/stats", a.GetProfileStats).Methods("GET")
 }
 func (a *Api) SetupTaskRoutes() {
 	a.authRouter.HandleFunc("/tasks", a.CRMHandlers.CreateTask).Methods("POST")
@@ -140,38 +150,63 @@ func (a *Api) SetupAdminRoutes() {
 	a.adminRouter.HandleFunc("/health/API", a.CRMHandlers.Hello).Methods("GET")
 	a.adminRouter.HandleFunc("/health/DB", a.CRMHandlers.DBPing).Methods("GET")
 }
+func (a *Api) SetupDatabases() {
+	a.log.Info("Setting up API databases")
+	manager := database.NewDBManager(a.Params.DbPath)
+
+	if err := manager.Connect(); err != nil {
+		a.log.Fatal("Cannot connect to database")
+	}
+
+	if err := manager.ApplyMigrations(); err != nil {
+		a.log.Fatal("Cannot Apply Migrations : ", err)
+	}
+
+	a.log.Info("Setting up token storage")
+	tokenStore, err := manager.InitTokenStore()
+	if err != nil {
+		a.log.Fatal("Cannot initialize token storage : ", err)
+	}
+
+	// ✅ This must be done unconditionally
+	a.db = manager.DB
+	a.CRMHandlers.DB = manager.DB
+	a.CRMHandlers.TokenStore = tokenStore
+
+	a.log.Info("DB setup complete")
+}
 func (a *Api) Start() {
-	var startErr error
+	var (
+		startErr error
+	)
+	fmt.Println(models.StartupText)
+	// Wait a Second
+	time.Sleep(50 * time.Millisecond)
+
 	// Setting Up logger
 	a.SetupLogger()
-
-	a.log.Info("Starting CRM API")
-
 	// Token setting
 	a.log.Info("Setting JWT token")
 	utils.SetJWTSecret(a.Params.JWTToken)
 
-	// Database initialization
-	a.log.Info("Setting DB connection")
-	manager := database.NewDBManager(a.Params.DbPath)
-	startErr = manager.Connect()
-	if startErr != nil {
-		a.log.Fatal("Cannot connect to database", startErr)
+	// Initialize OIDC if variables present
+	if utils.IsOidcMissing(utils.GetAllOidcParams()) {
+		a.log.Info("Setting Up OIDC")
+		startErr = a.SetupOIDC()
+		if startErr != nil {
+			a.log.Warn("Cannot start OIDC functionality : ", startErr)
+		}
 	}
-	err := manager.ApplyMigrations()
-	if err != nil {
-		a.log.Fatal("Cannot start Database : ", err)
-	}
-	a.db = manager.DB
+
+	// Database Setup
+	a.SetupDatabases()
 
 	// Router initialization
 	a.router = mux.NewRouter()
-	a.CRMHandlers.DB = manager.DB
 
 	// Setup routes
 	a.log.Info("Setting up routes")
 	a.SetupAllRoutes()
-
 	// Kill channel
 	var killSignal = make(chan os.Signal)
 	signal.Notify(killSignal, os.Interrupt, os.Kill, syscall.SIGTERM, syscall.SIGKILL)
@@ -184,7 +219,7 @@ func (a *Api) Start() {
 	go func() {
 		startSting := "Starting API at endpoint: " + a.Params.ApiPort
 		a.log.Info(startSting)
-		if err = server.ListenAndServeTLS(a.Params.CertFilePath, a.Params.KeyFilePath); err != nil && !errors.Is(http.ErrServerClosed, err) {
+		if err := server.ListenAndServeTLS(a.Params.CertFilePath, a.Params.KeyFilePath); err != nil && !errors.Is(http.ErrServerClosed, err) {
 			log.Fatalf("Cannot start API: %v", err)
 		}
 	}()
@@ -195,7 +230,7 @@ func (a *Api) Start() {
 	// Context creation and graceful shutdown of server
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second) // 5 seconds to shut down
 	defer cancel()
-	if err = server.Shutdown(ctx); err != nil {
+	if err := server.Shutdown(ctx); err != nil {
 		log.Fatalf("Server shutdown failed: %v", err)
 	}
 	a.Stop()
@@ -203,6 +238,10 @@ func (a *Api) Start() {
 func (a *Api) Stop() {
 	a.log.Info("Graceful shutdown of services")
 	err := a.db.Close()
+	err = a.TokenStore.DB.Close()
+	if err != nil {
+		a.log.Warn("Cannot close token storage : ", err)
+	}
 	if err != nil {
 		a.log.Warn("Couldn't close database connection:", err)
 	}

@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"log"
 	"micro-CRM/internal/logger"
+	"micro-CRM/internal/tokenstore"
 	_ "modernc.org/sqlite"
 	"os"
+	"path/filepath"
 )
 
 type DBManager struct {
@@ -24,9 +26,9 @@ func NewDBManager(dbPath string) *DBManager {
 func (dm *DBManager) Connect() error {
 	log.Println("finding Database")
 	if _, err := os.Stat(dm.path); err != nil {
-		return errors.New("database does not exist")
+		log.Println("No database found. Creating database...")
 	}
-	log.Println("connecting to Database")
+	log.Println("Connecting to Database")
 	db, err := sql.Open("sqlite", dm.path)
 	if err != nil {
 
@@ -48,6 +50,14 @@ func (dm *DBManager) Close() error {
 		return dm.DB.Close()
 	}
 	return nil
+}
+func (dm *DBManager) InitTokenStore() (*tokenstore.BuntDBTokenStore, error) {
+	tokenPath := filepath.Dir(dm.path) + "/tokens.db"
+	tokenStore, err := tokenstore.NewBuntDBTokenStore(tokenPath)
+	if err != nil {
+		return nil, err
+	}
+	return tokenStore, nil
 }
 
 func (dm *DBManager) ApplyMigrations() error {

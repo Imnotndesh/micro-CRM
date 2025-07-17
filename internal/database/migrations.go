@@ -13,7 +13,10 @@ CREATE TABLE IF NOT EXISTS users (
     username TEXT NOT NULL UNIQUE,
     email TEXT NOT NULL UNIQUE,
     password_hash TEXT NOT NULL,
+	role TEXT DEFAULT 'employee',
+	phone_number TEXT DEFAULT 'none',
     first_name TEXT,
+	status TEXT DEFAULT 'active',
     last_name TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP

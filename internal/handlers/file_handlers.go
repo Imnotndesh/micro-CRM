@@ -23,7 +23,7 @@ import (
 
 const (
 	maxUploadSize = 10 << 20
-	uploadDir     = "./uploads"
+	uploadDir     = "./data/uploads"
 )
 
 func ensureUploadsDir(c logger.Logger) {

@@ -190,7 +190,7 @@ func (a *Api) Start() {
 	utils.SetJWTSecret(a.Params.JWTToken)
 
 	// Initialize OIDC if variables present
-	if utils.IsOidcMissing(utils.GetAllOidcParams()) {
+	if !utils.IsOidcMissing(utils.GetAllOidcParams()) {
 		a.log.Info("Setting Up OIDC")
 		startErr = a.SetupOIDC()
 		if startErr != nil {

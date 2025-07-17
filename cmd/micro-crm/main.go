@@ -17,7 +17,7 @@ func main() {
 	_ = godotenv.Load()
 	customVars.JWTToken = os.Getenv("JWT_TOKEN")
 	customVars.ApiPort = os.Getenv("API_PORT")
-	customVars.WebUiUrl = os.Getenv("WEB_UI_URL")
+	customVars.WebUiUrl = os.Getenv("WEB_UI_BASE_URL")
 	customVars.DataPath = os.Getenv("DATA_STORAGE_PATH")
 	customVars.DbPath = customVars.DataPath + "/database/micro-crm.db"
 	customVars.CertFilePath = os.Getenv("CERT_FILE_PATH")
@@ -26,7 +26,7 @@ func main() {
 	_, err := os.Stat(customVars.DataPath)
 	if os.IsNotExist(err) {
 		log.Println("Data storage path env variable missing, trying defaults")
-		customVars.DbPath = "./data"
+		customVars.DbPath = customVars.DataPath + "/database/micro-crm.db"
 	}
 	if customVars.ApiPort == "" {
 		customVars.ApiPort = models.DefaultApiPort
